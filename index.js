@@ -318,7 +318,7 @@ class SamsungAirco {
     // 목표 운전 상태를 설정
     setTargetHeaterCoolerState(value, callback) {
         if (value === Characteristic.TargetHeaterCoolerState.COOL) {
-            this.sendCommand('/mode', { modes: ["CoolClean"] })
+            this.sendCommand('/mode', { modes: ["Cool"] })
                 .then(() => {
                     // UI에 즉시 반영되도록 홈킷 상태를 강제로 업데이트
                     this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).updateValue(Characteristic.CurrentHeaterCoolerState.COOLING);
