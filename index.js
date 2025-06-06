@@ -244,9 +244,9 @@ class SamsungAirco {
                 .catch(error => callback(error));
         } else {
             // 만약 '켜기'를 눌렀다면
-            this.log.info('Setting mode to "Cool" then turning on...');
+            this.log.info('Setting mode to "DryClean" then turning on...');
             // 1. 먼저 운전 모드를 'Cool' (또는 'CoolClean')으로 설정하라는 명령을 보냅니다.
-            this.sendCommand('/mode', { modes: ['CoolClean'] }) // <--- 'CoolClean'으로 변경 가능
+            this.sendCommand('/mode', { modes: ['DryClean'] }) // <--- 'CoolClean'으로 변경 가능
                 // 2. 모드 설정 명령이 성공하면, 이어서 전원을 'On'으로 설정하라는 명령을 보냅니다.
                 .then(() => this.sendCommand('', { Operation: { power: 'On' } }))
                 // 3. 모든 명령이 성공적으로 끝나면 Homebridge에 성공(에러 없음)을 알립니다.
@@ -338,7 +338,7 @@ class SamsungAirco {
     // 목표 운전 상태를 설정
     setTargetHeaterCoolerState(value, callback) {
         if (value === Characteristic.TargetHeaterCoolerState.COOL) {
-            this.sendCommand('/mode', { modes: ["CoolClean"] })
+            this.sendCommand('/mode', { modes: ["DryClean"] })
                 .then(() => {
                     // UI에 즉시 반영되도록 홈킷 상태를 강제로 업데이트
                     this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).updateValue(Characteristic.CurrentHeaterCoolerState.COOLING);
