@@ -196,28 +196,37 @@ class SamsungAirco {
     }
 
     // 이 액세서리가 제공하는 서비스와 각 서비스의 특성(기능)을 정의하는 함수.
-    getServices() {
-        // Homebridge API 버전 호환성 오류를 해결하기 위해 이전 문법(.on) 사용.
-        this.aircoSamsung.getCharacteristic(Characteristic.Active) // '활성' 특성 (전원 On/Off)
-            .on('get', this.getActive.bind(this))
-            .on('set', this.setActive.bind(this));
-        this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature) // '현재 온도' 특성
-            .on('get', this.getCurrentTemperature.bind(this));
-        this.aircoSamsung.getCharacteristic(Characteristic.TargetHeaterCoolerState) // '목표 냉난방기 상태' 특성
-            .setProps({ validValues: [Characteristic.TargetHeaterCoolerState.COOL] }) // '냉방'만 지원
-            .on('get', this.getTargetHeaterCoolerState.bind(this))
-            .on('set', this.setTargetHeaterCoolerState.bind(this));
-        this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState) // '현재 냉난방기 상태' 특성
-            .on('get', this.getCurrentHeaterCoolerState.bind(this));
-        this.aircoSamsung.getCharacteristic(Characteristic.CoolingThresholdTemperature) // '냉방 설정 온도' 특성
-            .setProps({ minValue: 18, maxValue: 30, minStep: 1 }) // 온도 범위 및 단계 설정
-            .on('get', this.getTargetTemperature.bind(this))
-            .on('set', this.setTargetTemperature.bind(this));
-        this.aircoSamsung.getCharacteristic(Characteristic.SwingMode) // '스윙 모드' 특성
-            .on('get', this.getSwingMode.bind(this))
-            .on('set', this.setSwingMode.bind(this));
-        return [this.informationService, this.aircoSamsung];
-    }
+    getServices() {
+       // ✅ 수정된 부분: 이 서비스가 액세서리의 '대표'임을 명시적으로 설정합니다.
+       this.aircoSamsung.setPrimaryService(true);
+
+       // --- 특성(기능)들을 서비스에 추가합니다 ---
+       this.aircoSamsung.getCharacteristic(Characteristic.Active)
+           .on('get', this.getActive.bind(this))
+           .on('set', this.setActive.bind(this));
+
+       this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature)
+           .on('get', this.getCurrentTemperature.bind(this));
+
+       this.aircoSamsung.getCharacteristic(Characteristic.TargetHeaterCoolerState)
+           .setProps({ validValues: [Characteristic.TargetHeaterCoolerState.AUTO, Characteristic.TargetHeaterCoolerState.COOL] })
+           .on('get', this.getTargetHeaterCoolerState.bind(this))
+           .on('set', this.setTargetHeaterCoolerState.bind(this));
+
+       this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState)
+           .on('get', this.getCurrentHeaterCoolerState.bind(this));
+
+       this.aircoSamsung.getCharacteristic(Characteristic.CoolingThresholdTemperature)
+           .setProps({ minValue: 18, maxValue: 30, minStep: 1 })
+           .on('get', this.getTargetTemperature.bind(this))
+           .on('set', this.setTargetTemperature.bind(this));
+
+       this.aircoSamsung.getCharacteristic(Characteristic.SwingMode)
+           .on('get', this.getSwingMode.bind(this))
+           .on('set', this.setSwingMode.bind(this));
+
+       return [this.informationService, this.aircoSamsung];
+   }
     
     // --- Getters & Setters (Homebridge의 요청에 응답하는 콜백 방식으로 전면 수정) ---
 
