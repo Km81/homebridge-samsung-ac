@@ -235,14 +235,34 @@ class SamsungAirco {
     }
 
     // 홈 앱에서 받은 값으로 전원 상태를 설정
-    setActive(value, callback) {
-        const power = value === Characteristic.Active.ACTIVE ? "On" : "Off";
-        this.sendCommand('', { Operation: { power: power } })
-            // 성공하면 에러 없이(null) callback 호출.
-            .then(() => callback(null))
-            // 실패하면 에러를 callback에 전달.
-            .catch(error => callback(error));
-    }
+    setActive(value, callback) {
+        // 만약 '끄기'를 눌렀다면
+        if (value === Characteristic.Active.INACTIVE) {
+            // 간단히 전원 끄기 명령만 보냅니다.
+            this.sendCommand('', { Operation: { power: 'Off' } })
+                .then(() => callback(null))
+                .catch(error => callback(error));
+        } else {
+            // 만약 '켜기'를 눌렀다면
+            this.log.info('Setting mode to "Cool" then turning on...');
+            // 1. 먼저 운전 모드를 'Cool' (또는 'CoolClean')으로 설정하라는 명령을 보냅니다.
+            this.sendCommand('/mode', { modes: ['CoolClean'] }) // <--- 'CoolClean'으로 변경 가능
+                // 2. 모드 설정 명령이 성공하면, 이어서 전원을 'On'으로 설정하라는 명령을 보냅니다.
+                .then(() => this.sendCommand('', { Operation: { power: 'On' } }))
+                // 3. 모든 명령이 성공적으로 끝나면 Homebridge에 성공(에러 없음)을 알립니다.
+                .then(() => {
+                    this.log.info('Successfully set mode and turned on.');
+                    // 홈킷 UI에도 현재 상태를 '냉방중'으로 즉시 업데이트해줍니다.
+                    this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).updateValue(Characteristic.CurrentHeaterCoolerState.COOLING);
+                    callback(null);
+                })
+                // 4. 중간에 어느 단계라도 실패하면 에러를 보고합니다.
+                .catch(error => {
+                    this.log.error('Failed to set mode and turn on:', error);
+                    callback(error);
+                });
+        }
+    }
 
     // 현재 온도를 가져와서 전달
     getCurrentTemperature(callback) {
@@ -318,7 +338,7 @@ class SamsungAirco {
     // 목표 운전 상태를 설정
     setTargetHeaterCoolerState(value, callback) {
         if (value === Characteristic.TargetHeaterCoolerState.COOL) {
-            this.sendCommand('/mode', { modes: ["Cool"] })
+            this.sendCommand('/mode', { modes: ["CoolClean"] })
                 .then(() => {
                     // UI에 즉시 반영되도록 홈킷 상태를 강제로 업데이트
                     this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).updateValue(Characteristic.CurrentHeaterCoolerState.COOLING);
