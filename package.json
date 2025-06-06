@@ -1,19 +1,30 @@
 {
-  "name": "homebridge-samsung-airconditioner",
-  "version": "0.1",
-  "description": "node.js plugin for the Samsung smart samsung-airconditioners",
-"main" : "index.js",
- 
+  "name": "homebridge-samsung-ac",
+  "version": "1.0.0",
+  "description": "Smart and unified Homebridge plugin for various Samsung air conditioner models",
+  "main": "index.js",
+  "author": "Km81",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Km81/homebridge-samsung-ac.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Km81/homebridge-samsung-ac/issues"
+  },
+  "homepage": "https://github.com/Km81/homebridge-samsung-ac#readme",
   "keywords": [
-    "Samsung",
-    "Air Conditioner",
-"homebridge-plugin"
+    "homebridge-plugin",
+    "samsung",
+    "air-conditioner",
+    "ac",
+    "homekit"
   ],
   "engines": {
-    "node": ">=0.8",
-"homebridge": ">=0.1"
+    "node": ">=14.0.0",
+    "homebridge": ">=1.0.0"
   },
   "dependencies": {
-        "exec": ">= 0.1.0"
+    "axios": "^1.7.2"
   }
 }
