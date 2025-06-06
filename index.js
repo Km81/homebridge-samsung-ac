@@ -1,372 +1,199 @@
-var Service, Characteristic, UUIDGen;
-var exec2 = require("child_process").exec;
-var response;
+'use strict';
+
+const axios = require('axios');
+const https = require('https');
+const fs = require('fs');
+
+var Service, Characteristic, Accessory;
 
 module.exports = function(homebridge) {
     Service = homebridge.hap.Service;
     Characteristic = homebridge.hap.Characteristic;
     Accessory = homebridge.hap.Accessory;
-    UUIDGen = homebridge.hap.uuid;
-    homebridge.registerAccessory("homebridge-samsung-airconditioner", "SamsungAirconditioner", SamsungAirco);
-};
-
-function SamsungAirco(log, config) {
-    this.log=log;
-    this.name= config["name"];
-    this.ip=config["ip"];
-    this.token=config["token"];
-    this.patchCert=config["patchCert"];
-    this.accessoryName=config["name"];
-    this.setOn = true;
-    this.setOff= false;
+    // 플러그인 식별자와 Accessory 이름을 요청하신 내용에 맞게 변경
+    homebridge.registerAccessory('homebridge-samsung-ac', 'SamsungAC', SamsungAirco);
 }
 
+class SamsungAirco {
+    constructor(log, config) {
+        this.log = log;
+        this.name = config.name;
 
-
-SamsungAirco.prototype = {
-    
-    
-execRequest: function(str, body, callback){
-    exec2(str, function(error, stdout, stderr){
-        callback(error, stdout, stderr)
-          })
-    //return stdout;
-},
-    identify: function(callback) {
-        this.log("Identify the clima!");
-        callback(); // success
-    },
-    
-    
-
-getServices: function() {
-    
-    var uuid;
-    uuid = UUIDGen.generate(this.accessoryName);
-    this.aircoSamsung = new Service.HeaterCooler(this.name, uuid);
-    
+        // --- 통합 및 강화된 설정 ---
+        this.ip = config.ip;
+        this.token = config.token;
+        this.patchCert = config.patchCert;
         
-    this.aircoSamsung.getCharacteristic(Characteristic.Active).on('get',this.getActive.bind(this)).on('set', this.setActive.bind(this)); //On  or Off
-        
-        this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature)
-        .setProps({
-                  minValue: 0,
-                  maxValue: 100,
-                  minStep: 0.01
-                  })
-        .on('get', this.getCurrentTemperature.bind(this));
+        this.deviceIndex = config.deviceIndex || 0; 
+        this.setDeviceIndex = config.setDeviceIndex ?? this.deviceIndex;
+        this.swingModeType = config.swingModeType || 'comfort'; // 'comfort' for Comode_Nano, 'wind' for Up_And_Low
 
-        this.aircoSamsung.getCharacteristic(Characteristic.TargetHeaterCoolerState).on('get',this.getModalita.bind(this)).on('set', this.setModalita.bind(this));
-        
-        this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState)
-        .on('get', this.getCurrentHeaterCoolerState.bind(this));
-        
-        this.aircoSamsung.getCharacteristic(Characteristic.HeatingThresholdTemperature)
-        .setProps({
-                  minValue: 16,
-                  maxValue: 30,
-                  minStep: 1
-                  })
-        .on('get', this.getHeatingUpOrDwTemperature.bind(this))
-        .on('set', this.setHeatingUpOrDwTemperature.bind(this));
+        this.cacheDuration = config.cacheDuration || 3000; // 3초 캐시
 
-        
-        var informationService = new Service.AccessoryInformation();
-      
+        if (!this.ip || !this.token || !this.patchCert) {
+            this.log.error("IP, token, and patchCert must be configured.");
+            return;
+        }
 
-    return [informationService, this.aircoSamsung];
-    
-},
-    
-    //services
-    
-    
-getHeatingUpOrDwTemperature: function(callback) {
-    var body;
-    str = 'curl -s -k -H "Content-Type: application/json" -H "Authorization: Bearer '+this.token+'" --cert '+this.patchCert+' --insecure -X GET https://'+this.ip+':8888/devices|jq \'.Devices[0].Temperatures[0].desired\'';
-    
-    this.execRequest(str, body, function(error, stdout, stderr) {
-                     if(error) {
-                     //this.log('Power function failed', stderr);
-                     callback(error);
-                     } else {
-                     //this.log('Power function OK');
-                     //this.response=stdout;
-                     this.log("TEMPERTURA DESIDERTA");
-                     body=parseInt(stdout);
-                     this.log(stdout);
-                     this.log(body);
+        // --- Axios 인스턴스 생성 ---
+        this.api = axios.create({
+            baseURL: `https://${this.ip}:8888`,
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${this.token}`
+            },
+            httpsAgent: new https.Agent({
+                cert: fs.readFileSync(this.patchCert),
+                rejectUnauthorized: false
+            }),
+            timeout: 5000
+        });
 
-                     callback(null, body);
-                     //callback();
-                     }
-                     }.bind(this))
-    
-    //callback(null, null);
-},
-    
-setHeatingUpOrDwTemperature: function(temp, callback) {
-    var body;
-    
-    str = 'curl -X PUT -d \'{"desired": '+temp+'}\' -v -k -H "Content-Type: application/json" -H "Authorization: Bearer '+this.token+'" --cert '+this.patchCert+' --insecure -X GET https://'+this.ip+':8888/devices/0/temperatures/0';
-    
-    this.execRequest(str, body, function(error, stdout, stderr) {
-                     if(error) {
-                     //this.log('Power function failed', stderr);
-                     callback(error);
-                     } else {
-                     //this.log('Power function OK');
-                     this.log(stdout);
-                     callback(null, temp);
-                     //callback();
-                     }
-                     }.bind(this))
-    
-    
-},
-    
-getCurrentHeaterCoolerState: function (callback) {
-    var body;
-    
-    str= 'curl -s -k -H "Content-Type: application/json" -H "Authorization: Bearer '+this.token+'" --cert '+this.patchCert+' --insecure -X GET https://'+this.ip+':8888/devices|jq \'.Devices[0].Mode.modes[0]\'';
-    
-    this.execRequest(str, body, function(error, stdout, stderr) {
-                     if(error) {
-                     //this.log('Power function failed', stderr);
-                     callback(error);
-                     } else {
-                     //this.log('Power function OK');
-                     //this.log(stdout);
-                     this.response=stdout;
-                     this.response= this.response.substr(1,this.response.length-3);
-                     //this.log(this.response);
-                     if (this.response == "Cool") {
-                     callback(null, Characteristic.CurrentHeaterCoolerState.COOLING);
-                     } else if (this.response == "Heat") {
-                     callback(null, Characteristic.CurrentHeaterCoolerState.HEATING);
-                     } else if (this.response == "Fan") {
-                     callback(null, Characteristic.CurrentHeaterCoolerState.INACTIVE);
-                     } else if (this.response == "Auto") {
-                     callback(null, Characteristic.CurrentHeaterCoolerState.IDLE);
-                     }else
-                     this.log(this.response+ "azz");
-                     //callback();
-                     }
-                     }.bind(this))
-},
-    
-getCurrentTemperature: function(callback) {
-    var body;
-    
-    str = 'curl -s -k -H "Content-Type: application/json" -H "Authorization: Bearer '+this.token+'" --cert '+this.patchCert+' --insecure -X GET https://'+this.ip+':8888/devices|jq \'.Devices[0].Temperatures[0].current\'';
-    
-    this.execRequest(str, body, function(error, stdout, stderr) {
-                     if(error) {
-                     this.log('Power function failed', stderr);
-                     callback(error);
-                     } else {
-                     this.log('Power function OK');
-                     //callback();
-                     this.log(stdout);
-                     body=parseInt(stdout);
-                     this.log("Temperatura corrente: "+body);
-                     this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature).updateValue(body);
-                     }
-                     callback(null, body); //Mettere qui ritorno di stdout? o solo callback()
-                     }.bind(this));
- 
-},
-    
-    
-getActive: function(callback) {
-    var body;
-    var OFForON;
-    str = 'curl -s -k -H "Content-Type: application/json" -H "Authorization: Bearer '+this.token+'" --cert '+this.patchCert+' --insecure -X GET https://'+this.ip+':8888/devices|jq \'.Devices[0].Operation.power\'';
-    
-    
-    this.execRequest(str, body, function(error, stdout, stderr) {
-                     if(error) {
-                     this.log('Power function failed', stderr);
-                     callback(error);
-                     } else {
-                     this.log('Power function OK');
-                     this.log(stdout);
-                     this.response=stdout;
-                     this.response= this.response.substr(1,this.response.length-3);
-                     this.log(this.response);
-                     //callback();
-                     
-                     }
-                     if (this.response == "Off") {
-                     callback(null, Characteristic.Active.INACTIVE);
-                     } else if (this.response == "On") {
-                     this.log("AZZZ");
-                     callback(null, Characteristic.Active.ACTIVE);
-                     } else {
-                     this.log(this.response+ "NON LO SO");
-                     }
-                     }.bind(this));
-    
-},
-    
-setActive: function(state, callback) {
-    var body;
-    this.log(state);
-    var activeFuncion = function(state) {
-        if (state==Characteristic.Active.ACTIVE) {
-            str = 'curl -k -H "Content-Type: application/json" -H "Authorization: Bearer '+this.token+'" --cert '+this.patchCert+' --insecure -X PUT -d \'{"Operation" : {\"power"\ : \"On"\}}\' https://'+this.ip+':8888/devices/0';
-            console.log("ATTIVO");
-        } else {
-            console.log("INATTIVO");
-            str = 'curl -k -H "Content-Type: application/json" -H "Authorization: Bearer '+this.token+'" --cert '+this.patchCert+' --insecure -X PUT -d \'{"Operation" : {\"power"\ : \"Off"\}}\' https://'+this.ip+':8888/devices/0';
+        // --- 상태 캐싱 변수 ---
+        this.deviceState = null;
+        this.lastStateUpdate = 0;
+
+        // --- 서비스 생성 ---
+        this.aircoSamsung = new Service.HeaterCooler(this.name);
+        this.informationService = new Service.AccessoryInformation()
+            .setCharacteristic(Characteristic.Manufacturer, 'Samsung')
+            .setCharacteristic(Characteristic.Model, 'Air Conditioner')
+            .setCharacteristic(Characteristic.SerialNumber, config.serialNumber || 'DefaultSN');
+    }
+
+    // --- 상태 캐싱 헬퍼 ---
+    async getCachedState() {
+        const now = Date.now();
+        if (this.deviceState && (now - this.lastStateUpdate < this.cacheDuration)) {
+            return this.deviceState;
+        }
+
+        this.log.info('Fetching latest state from device...');
+        try {
+            const response = await this.api.get('/devices');
+            this.deviceState = response.data.Devices[this.deviceIndex];
+            this.lastStateUpdate = now;
+            return this.deviceState;
+        } catch (error) {
+            this.log.error(`Failed to fetch device state: ${error.message}`);
+            if (this.deviceState) {
+                this.log.warn('Returning stale data due to fetch error.');
+                return this.deviceState;
+            }
+            throw new Error('Could not fetch device state.');
         }
     }
-    activeFuncion(state);
-    
-    this.execRequest(str, body, function(error, stdout, stderr) {
-                     if(error) {
-                     this.log('Power function failed', stderr);
-                     callback(error);
-                     } else {
-                     this.log('Power function OK');
-                     //callback();
-                     this.log(stdout);
-                     }
-                     }.bind(this));
-    callback();
-},
-    
-setPowerState: function(powerOn, callback) {
-    var body;
-    var str;
-    this.log("Il clima per ora è ");
-    
-    if (powerOn) {
-        body=this.setOn
-        this.log("Acceso");
-        str = 'curl -k -H "Content-Type: application/json" -H "Authorization: Bearer '+this.token+'" --cert '+this.patchCert+' --insecure -X PUT -d \'{"Operation" : {\"power"\ : \"On"\}}\' https://'+this.ip+':8888/devices/0';
-        //powerOn=false;
-        
-    } else {
-        body=this.setOff;
-        this.log("Spengo");
-        str = 'curl -k -H "Content-Type: application/json" -H "Authorization: Bearer '+this.token+'" --cert '+this.patchCert+' --insecure -X PUT -d \'{"Operation" : {\"power"\ : \"Off"\}}\' https://'+this.ip+':8888/devices/0';
-        //powerOn=true;
-    }
-    
-    
-    this.execRequest(str, body, function(error, stdout, stderr) {
-                     if(error) {
-                     this.log('Power function failed', stderr);
-                     callback(error);
-                     } else {
-                     this.log('Power function OK');
-                     callback();
-                     this.log(stdout);
-                     }
-                     }.bind(this));
-},
-    
-getModalita: function(callback) {
-    var str;
-    //var response;
-    var body;
-    this.log("Mettere modalita");
-    //str =  'curl -X PUT -d \'{"speedLevel": 1}\' -v -k -H "Content-Type: application/json" -H "Authorization: Bearer 0HiRz37Baa" --cert /Users/francescobosco/Desktop/ac14k_m.pem --insecure https://192.168.1.201:8888/devices/0/wind';
-   // if (data.setting.power=="OFF") {
-    //    callback(null, null);
- //   }
-    str= 'curl -s -k -H "Content-Type: application/json" -H "Authorization: '+this.token+'" --cert '+this.patchCert+' --insecure -X GET https://'+this.ip+':8888/devices|jq \'.Devices[0].Mode.modes[0]\'';
-    
-    this.execRequest(str, body, function(error, stdout, stderr) {
-                              if(error) {
-                              this.log('Power function failed', stderr);
-                              callback(error);
-                              } else {
-                              this.log('Power function OK');
-                                     this.log(stdout);
-                                     this.response=stdout;
-                     this.response= this.response.substr(1,this.response.length-3);
-                     this.log(this.response);
-                                    callback();
-                              }
-                     
-                     if (this.response == "Cool") {
-                     Characteristic.TargetHeaterCoolerState.COOL;
-                     } else if (this.response == "Heat") {
-                     this.log("AZZZ");
-                     Characteristic.TargetHeaterCoolerState.HEAT;
-                     } else if (this.response == "FAN") {
-                     callback(null, null);
-                     } else if (this.response == "AUTO") {
-                     Characteristic.TargetHeaterCoolerState.AUTO;
-                     }else {
-                     this.log(this.response+ "azz");
-                     }
-                     
-                              }.bind(this));
-    
-},
-setModalita: function(state, callback) {
-    
-    switch (state){
-        case Characteristic.TargetHeaterCoolerState.COOL:
-            var body;
-           // if (accessory.coolMode){
-                this.log("Setting  AC to COOL")
-                 str =  'curl -X PUT -d \'{"modes": ["Cool"]}\' -v -k -H "Content-Type: application/json" -H "Authorization: '+this.token+'" --cert '+this.patchCert+' --insecure https://'+this.ip+':8888/devices/0/mode';
-                this.execRequest(str, body, function(error, stdout, stderr) {
-                                 if(error) {
-                                 this.log('Power function failed', stderr);
-                                 callback(error);
-                                 } else {
-                                 this.log('Power function OK');
-                                 callback();
-                                 this.log(stdout);
-                                 }
-                                 }.bind(this));
-                //return accessory.lastMode.cool
-                
-            //} //else return null
-                break;
-        case Characteristic.TargetHeaterCoolerState.HEAT:
-            var body;
-            //if (accessory.heatMode){
-                this.log("Setting  AC to HEAT")
-                str =  'curl -X PUT -d \'{"modes": ["Heat"]}\' -v -k -H "Content-Type: application/json" -H "Authorization: '+this.token+'" --cert '+this.patchCert+' --insecure https://'+this.ip+':8888/devices/0/mode';
-                this.execRequest(str, body, function(error, stdout, stderr) {
-                                 if(error) {
-                                 this.log('Power function failed', stderr);
-                                 callback(error);
-                                 } else {
-                                 this.log('Power function OK');
-                                 callback();
-                                 this.log(stdout);
-                                 }
-                                 }.bind(this));
-               // return accessory.lastMode.heat
-            //} else return null
-                break;
-        case Characteristic.TargetHeaterCoolerState.AUTO:
-    var body;
-           // if (accessory.autoMode){
-                this.log("Setting  AC to AUTO")
-                str =  'curl -X PUT -d \'{"modes": ["Auto"]}\' -v -k -H "Content-Type: application/json" -H "Authorization: '+this.token+'" --cert '+this.patchCert+' --insecure https://'+this.ip+':8888/devices/0/mode';
-                this.execRequest(str, body, function(error, stdout, stderr) {
-                                 if(error) {
-                                 this.log('Power function failed', stderr);
-                                 callback(error);
-                                 } else {
-                                 this.log('Power function OK');
-                                 callback();
-                                 this.log(stdout);
-                                 }
-                                 }.bind(this));
-                //return accessory.lastMode.auto
-            //} //else return null
-                break;
-    }
-    
-}    
-};
 
+    // --- API 제어 헬퍼 ---
+    async sendCommand(endpoint, data) {
+        try {
+            const fullEndpoint = `/devices/${this.setDeviceIndex}${endpoint}`;
+            await this.api.put(fullEndpoint, data);
+            this.log.info(`Command sent to ${fullEndpoint} successfully.`);
+            this.deviceState = null; // 캐시 무효화
+            await this.getCachedState();
+        } catch (error) {
+            this.log.error(`Failed to send command to ${endpoint}: ${error.message}`);
+            throw error;
+        }
+    }
+
+    identify(callback) {
+        this.log.info("Identify requested!");
+        callback();
+    }
+
+    getServices() {
+        this.aircoSamsung.getCharacteristic(Characteristic.Active)
+            .onGet(this.getActive.bind(this))
+            .onSet(this.setActive.bind(this));
+
+        this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature)
+            .onGet(this.getCurrentTemperature.bind(this));
+
+        this.aircoSamsung.getCharacteristic(Characteristic.TargetHeaterCoolerState)
+            .setProps({ validValues: [Characteristic.TargetHeaterCoolerState.COOL] })
+            .onGet(this.getTargetHeaterCoolerState.bind(this))
+            .onSet(this.setTargetHeaterCoolerState.bind(this));
+
+        this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState)
+            .onGet(this.getCurrentHeaterCoolerState.bind(this));
+
+        this.aircoSamsung.getCharacteristic(Characteristic.CoolingThresholdTemperature)
+            .setProps({ minValue: 18, maxValue: 30, minStep: 1 })
+            .onGet(this.getTargetTemperature.bind(this))
+            .onSet(this.setTargetTemperature.bind(this));
+
+        this.aircoSamsung.getCharacteristic(Characteristic.SwingMode)
+            .onGet(this.getSwingMode.bind(this))
+            .onSet(this.setSwingMode.bind(this));
+
+        return [this.informationService, this.aircoSamsung];
+    }
+    
+    // --- Getters & Setters ---
+
+    async getActive() {
+        const state = await this.getCachedState();
+        return state.Operation.power === "On" ? Characteristic.Active.ACTIVE : Characteristic.Active.INACTIVE;
+    }
+
+    async setActive(value) {
+        const power = value === Characteristic.Active.ACTIVE ? "On" : "Off";
+        await this.sendCommand('', { Operation: { power: power } });
+    }
+
+    async getCurrentTemperature() {
+        const state = await this.getCachedState();
+        return state.Temperatures[0].current;
+    }
+
+    async getTargetTemperature() {
+        const state = await this.getCachedState();
+        return state.Temperatures[0].desired;
+    }
+
+    async setTargetTemperature(value) {
+        await this.sendCommand('/temperatures/0', { desired: value });
+    }
+
+    // --- 설정 기반으로 분기하는 스윙 모드 로직 ---
+    async getSwingMode() {
+        const state = await this.getCachedState();
+        if (this.swingModeType === 'wind') {
+            const mode = state.Wind.direction;
+            return mode === "Up_And_Low" ? Characteristic.SwingMode.SWING_ENABLED : Characteristic.SwingMode.SWING_DISABLED;
+        } else {
+            const isNano = state.Mode.options.includes("Comode_Nano");
+            return isNano ? Characteristic.SwingMode.SWING_ENABLED : Characteristic.SwingMode.SWING_DISABLED;
+        }
+    }
+
+    async setSwingMode(value) {
+        if (this.swingModeType === 'wind') {
+            const direction = value === Characteristic.SwingMode.SWING_ENABLED ? "Up_And_Low" : "Fix";
+            await this.sendCommand('/wind', { direction: direction });
+        } else {
+            const mode = value === Characteristic.SwingMode.SWING_ENABLED ? "Comode_Nano" : "Comode_Off";
+            await this.sendCommand('/mode', { options: [mode] });
+        }
+    }
+
+    async getCurrentHeaterCoolerState() {
+        const state = await this.getCachedState();
+        const coolModes = ["CoolClean", "Cool", "Dry", "DryClean", "Auto", "Wind"];
+        const isCooling = coolModes.includes(state.Mode.modes[0]);
+        return isCooling ? Characteristic.CurrentHeaterCoolerState.COOLING : Characteristic.CurrentHeaterCoolerState.IDLE;
+    }
+
+    async getTargetHeaterCoolerState() {
+        return this.getCurrentHeaterCoolerState();
+    }
+    
+    async setTargetHeaterCoolerState(value) {
+        if (value === Characteristic.TargetHeaterCoolerState.COOL) {
+            await this.sendCommand('/mode', { modes: ["Cool"] });
+            this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).updateValue(Characteristic.CurrentHeaterCoolerState.COOLING);
+        }
+    }
+}
