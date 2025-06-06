@@ -44,7 +44,7 @@ class SamsungAirco {
             },
             httpsAgent: new https.Agent({
                 cert: fs.readFileSync(this.patchCert),
-                rejectUnauthorized: false
+                rejectUnauthorized: false,
                 ciphers: 'DEFAULT@SECLEVEL=1'
             }),
             timeout: 5000
