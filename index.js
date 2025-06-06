@@ -251,7 +251,7 @@ class SamsungAirco {
                 .then(() => {
                     this.log.info('Mode set. Waiting for 1 second before turning on power...');
                     // 1.5. 모드 설정 후 1초(1000ms)를 기다립니다.
-                    return new Promise(resolve => setTimeout(resolve, 1000));
+                    return new Promise(resolve => setTimeout(resolve, 2000));
                 })
                 // 2. 1초 뒤에, 전원을 'On'으로 설정하라는 명령을 보냅니다.
                 .then(() => this.sendCommand('', { Operation: { power: 'On' } }))
