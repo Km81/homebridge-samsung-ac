@@ -2,7 +2,7 @@
 'use strict';
 
 // Node.js에 내장된 https 모듈을 불러옵니다. axios 라이브러리를 대체하여 더 낮은 수준의 직접적인 통신을 담당합니다.
-const https = require('https);
+const https = require('https');
 // Node.js에 내장된 fs (File System) 모듈로, 인증서 같은 파일을 읽기 위해 필요합니다.
 const fs = require('fs');
 
