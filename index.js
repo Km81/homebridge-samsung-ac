@@ -234,29 +234,35 @@ class SamsungAirco {
         });
     }
 
-    // 홈 앱에서 받은 값으로 전원 상태를 설정
+   // 홈 앱에서 받은 값으로 전원 상태를 설정
     setActive(value, callback) {
-        // 만약 '끄기'를 눌렀다면
+        // 만약 '끄기'를 눌렀다면
         if (value === Characteristic.Active.INACTIVE) {
             // 간단히 전원 끄기 명령만 보냅니다.
             this.sendCommand('', { Operation: { power: 'Off' } })
                 .then(() => callback(null))
                 .catch(error => callback(error));
         } else {
-            // 만약 '켜기'를 눌렀다면
+            // 만약 '켜기'를 눌렀다면
             this.log.info('Setting mode to "DryClean" then turning on...');
-            // 1. 먼저 운전 모드를 'Cool' (또는 'CoolClean')으로 설정하라는 명령을 보냅니다.
-            this.sendCommand('/mode', { modes: ['DryClean'] }) // <--- 'CoolClean'으로 변경 가능
-                // 2. 모드 설정 명령이 성공하면, 이어서 전원을 'On'으로 설정하라는 명령을 보냅니다.
+            // 1. 먼저 운전 모드를 'DryClean'으로 설정하라는 명령을 보냅니다.
+            this.sendCommand('/mode', { modes: ['DryClean'] })
+                // ✅ 수정된 부분: 딜레이 추가
+                .then(() => {
+                    this.log.info('Mode set. Waiting for 1 second before turning on power...');
+                    // 1.5. 모드 설정 후 1초(1000ms)를 기다립니다.
+                    return new Promise(resolve => setTimeout(resolve, 1000));
+                })
+                // 2. 1초 뒤에, 전원을 'On'으로 설정하라는 명령을 보냅니다.
                 .then(() => this.sendCommand('', { Operation: { power: 'On' } }))
-                // 3. 모든 명령이 성공적으로 끝나면 Homebridge에 성공(에러 없음)을 알립니다.
+                // 3. 모든 명령이 성공적으로 끝나면 Homebridge에 성공(에러 없음)을 알립니다.
                 .then(() => {
                     this.log.info('Successfully set mode and turned on.');
-                    // 홈킷 UI에도 현재 상태를 '냉방중'으로 즉시 업데이트해줍니다.
-                    this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).updateValue(Characteristic.CurrentHeaterCoolerState.COOLING);
+                    // 홈킷 UI에도 현재 상태를 '냉방중'으로 즉시 업데이트해줍니다.
+                    this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).updateValue(Characteristic.CurrentHeaterCoolerState.COOLING);
                     callback(null);
                 })
-                // 4. 중간에 어느 단계라도 실패하면 에러를 보고합니다.
+                // 4. 중간에 어느 단계라도 실패하면 에러를 보고합니다.
                 .catch(error => {
                     this.log.error('Failed to set mode and turn on:', error);
                     callback(error);
