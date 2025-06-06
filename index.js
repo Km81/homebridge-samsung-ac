@@ -105,29 +105,31 @@ class SamsungAirco {
     }
 
     getServices() {
+        // --- .onGet -> .on('get', ...) 으로, .onSet -> .on('set', ...) 으로 수정 ---
+
         this.aircoSamsung.getCharacteristic(Characteristic.Active)
-            .onGet(this.getActive.bind(this))
-            .onSet(this.setActive.bind(this));
+            .on('get', this.getActive.bind(this))
+            .on('set', this.setActive.bind(this));
 
         this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature)
-            .onGet(this.getCurrentTemperature.bind(this));
+            .on('get', this.getCurrentTemperature.bind(this));
 
         this.aircoSamsung.getCharacteristic(Characteristic.TargetHeaterCoolerState)
             .setProps({ validValues: [Characteristic.TargetHeaterCoolerState.COOL] })
-            .onGet(this.getTargetHeaterCoolerState.bind(this))
-            .onSet(this.setTargetHeaterCoolerState.bind(this));
+            .on('get', this.getTargetHeaterCoolerState.bind(this))
+            .on('set', this.setTargetHeaterCoolerState.bind(this));
 
         this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState)
-            .onGet(this.getCurrentHeaterCoolerState.bind(this));
+            .on('get', this.getCurrentHeaterCoolerState.bind(this));
 
         this.aircoSamsung.getCharacteristic(Characteristic.CoolingThresholdTemperature)
             .setProps({ minValue: 18, maxValue: 30, minStep: 1 })
-            .onGet(this.getTargetTemperature.bind(this))
-            .onSet(this.setTargetTemperature.bind(this));
+            .on('get', this.getTargetTemperature.bind(this))
+            .on('set', this.setTargetTemperature.bind(this));
 
         this.aircoSamsung.getCharacteristic(Characteristic.SwingMode)
-            .onGet(this.getSwingMode.bind(this))
-            .onSet(this.setSwingMode.bind(this));
+            .on('get', this.getSwingMode.bind(this))
+            .on('set', this.setSwingMode.bind(this));
 
         return [this.informationService, this.aircoSamsung];
     }
