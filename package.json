@@ -1,6 +1,6 @@
 {
   "name": "homebridge-samsung-ac",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Smart and unified Homebridge plugin for various Samsung air conditioner models",
   "main": "index.js",
   "author": "Km81",
