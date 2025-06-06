@@ -40,7 +40,6 @@ class SamsungAirco {
         this.api = axios.create({
             baseURL: `https://${this.ip}:8888`,
             headers: {
-                'Content-Type': 'application/json',
                 'Authorization': `Bearer ${this.token}`
             },
             httpsAgent: new https.Agent({
