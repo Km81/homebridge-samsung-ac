@@ -46,8 +46,8 @@ class SamsungAirco {
             httpsAgent: new https.Agent({
                 cert: fs.readFileSync(this.patchCert),
                 rejectUnauthorized: false,
-                ciphers: 'DEFAULT@SECLEVEL=1', // 약한 암호화 방식(ca md too weak) 허용
-                secureOptions: crypto.constants.SSL_OP_LEGACY_SERVER_CONNECT // 구형 프로토콜(unsupported protocol) 지원
+                ciphers: 'DEFAULT@SECLEVEL=1', // 약한 인증서 서명(SHA1) 허용
+                secureProtocol: 'TLSv1_method'  // 결정적 해결책: TLSv1.0 프로토콜 사용 강제
             }),
             timeout: 5000
         });
