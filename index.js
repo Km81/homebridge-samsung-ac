@@ -3,6 +3,7 @@
 const axios = require('axios');
 const https = require('https');
 const fs = require('fs');
+const crypto = require('crypto'); // <-- 이 줄을 추가해주세요!
 
 var Service, Characteristic, Accessory;
 
@@ -45,7 +46,8 @@ class SamsungAirco {
             httpsAgent: new https.Agent({
                 cert: fs.readFileSync(this.patchCert),
                 rejectUnauthorized: false,
-                ciphers: 'DEFAULT@SECLEVEL=1'
+                ciphers: 'DEFAULT@SECLEVEL=1', // 약한 암호화 방식(ca md too weak) 허용
+                secureOptions: crypto.constants.SSL_OP_LEGACY_SERVER_CONNECT // 구형 프로토콜(unsupported protocol) 지원
             }),
             timeout: 5000
         });
