@@ -2,7 +2,7 @@
 'use strict';
 
 // Node.js에 내장된 https 모듈을 불러옵니다. axios 라이브러리를 대체하여 더 낮은 수준의 직접적인 통신을 담당합니다.
-const https = require('https');
+const https = require('https);
 // Node.js에 내장된 fs (File System) 모듈로, 인증서 같은 파일을 읽기 위해 필요합니다.
 const fs = require('fs');
 
@@ -174,7 +174,7 @@ class SamsungAirco {
 
     // 에어컨 상태를 변경하는 명령(PUT 요청)을 보내는 함수.
     sendCommand(endpoint, data) {
-        const fullEndpoint = `/devices/<span class="math-inline">\{this\.setDeviceIndex\}</span>{endpoint}`;
+        const fullEndpoint = `/devices/${this.setDeviceIndex}${endpoint}`;
         return this._request('PUT', fullEndpoint, data)
             .then(() => {
                 // 명령 성공 후 로그를 남기고, UI에 변경사항이 빠르게 반영되도록 캐시를 즉시 무효화.
@@ -204,8 +204,7 @@ class SamsungAirco {
         this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature) // '현재 온도' 특성
             .on('get', this.getCurrentTemperature.bind(this));
         this.aircoSamsung.getCharacteristic(Characteristic.TargetHeaterCoolerState) // '목표 냉난방기 상태' 특성
-            // ✅ 수정된 부분: 홈 앱에 '자동'과 '냉방' 두 가지 옵션만 표시되도록 설정
-            .setProps({ validValues: [Characteristic.TargetHeaterCoolerState.AUTO, Characteristic.TargetHeaterCoolerState.COOL] })
+            .setProps({ validValues: [Characteristic.TargetHeaterCoolerState.COOL] }) // '냉방'만 지원
             .on('get', this.getTargetHeaterCoolerState.bind(this))
             .on('set', this.setTargetHeaterCoolerState.bind(this));
         this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState) // '현재 냉난방기 상태' 특성
@@ -247,7 +246,7 @@ class SamsungAirco {
             // 만약 '켜기'를 눌렀다면
             this.log.info('Setting mode to "Cool" then turning on...');
             // 1. 먼저 운전 모드를 'Cool' (또는 'CoolClean')으로 설정하라는 명령을 보냅니다.
-            this.sendCommand('/mode', { modes: ['CoolClean'] })
+            this.sendCommand('/mode', { modes: ['CoolClean'] }) // <--- 'CoolClean'으로 변경 가능
                 // 2. 모드 설정 명령이 성공하면, 이어서 전원을 'On'으로 설정하라는 명령을 보냅니다.
                 .then(() => this.sendCommand('', { Operation: { power: 'On' } }))
                 // 3. 모든 명령이 성공적으로 끝나면 Homebridge에 성공(에러 없음)을 알립니다.
@@ -322,21 +321,9 @@ class SamsungAirco {
     // 현재 운전 상태를 가져와서 전달
     getCurrentHeaterCoolerState(callback) {
         this.getCachedState().then(state => {
-            // ✅ 수정된 부분: 'Wind' 모드는 냉방이 아니므로 별도로 정의합니다.
-            const currentMode = state.Mode.modes[0];
-            const windModes = ["Wind"];
-            const coolModes = ["CoolClean", "Cool", "Dry", "DryClean", "Auto"];
-
-            if (windModes.includes(currentMode)) {
-                // 현재 모드가 'Wind'이면 IDLE(비활성) 상태를 반환합니다.
-                callback(null, Characteristic.CurrentHeaterCoolerState.IDLE);
-            } else if (coolModes.includes(currentMode)) {
-                // 현재 모드가 '냉방' 관련 모드이면 COOLING 상태를 반환합니다.
-                callback(null, Characteristic.CurrentHeaterCoolerState.COOLING);
-            } else {
-                // 그 외의 경우에도 IDLE 상태를 반환합니다.
-                callback(null, Characteristic.CurrentHeaterCoolerState.IDLE);
-            }
+            const coolModes = ["CoolClean", "Cool", "Dry", "DryClean", "Auto", "Wind"];
+            const isCooling = coolModes.includes(state.Mode.modes[0]);
+            callback(null, isCooling ? Characteristic.CurrentHeaterCoolerState.COOLING : Characteristic.CurrentHeaterCoolerState.IDLE);
         }).catch(error => {
             callback(error);
         });
@@ -350,25 +337,16 @@ class SamsungAirco {
     
     // 목표 운전 상태를 설정
     setTargetHeaterCoolerState(value, callback) {
-        // ✅ 수정된 부분: 홈 앱에서 '자동'을 선택했을 때의 로직 추가
         if (value === Characteristic.TargetHeaterCoolerState.COOL) {
             this.sendCommand('/mode', { modes: ["CoolClean"] })
                 .then(() => {
+                    // UI에 즉시 반영되도록 홈킷 상태를 강제로 업데이트
                     this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).updateValue(Characteristic.CurrentHeaterCoolerState.COOLING);
                     callback(null);
                 })
                 .catch(error => callback(error));
-        } else if (value === Characteristic.TargetHeaterCoolerState.AUTO) {
-            // 요청대로 'Wind' 모드 명령을 보냅니다.
-            this.sendCommand('/mode', { modes: ["Wind"] })
-                .then(() => {
-                    // 'Wind'는 냉방/난방이 아니므로, 홈킷 UI 상태를 '비활성'으로 업데이트
-                    this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).updateValue(Characteristic.CurrentHeaterCoolerState.IDLE);
-                    callback(null);
-                })
-                .catch(error => callback(error));
         } else {
-            // 지원하지 않는 다른 모드 선택 시, 에러 없이 그냥 종료.
+            // 냉방 외 다른 상태 설정은 지원하지 않으므로, 에러 없이 그냥 종료.
             callback(null); 
         }
     }
