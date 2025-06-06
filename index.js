@@ -201,9 +201,9 @@ class SamsungAirco {
        this.aircoSamsung.setPrimaryService(true);
 
        // --- 특성(기능)들을 서비스에 추가합니다 ---
-        this.aircoSamsung.getCharacteristic(Characteristic.Active) // '활성' 특성 (전원 On/Off)Add commentMore actions
-            .on('get', this.getActive.bind(this))
-            .on('set', this.setActive.bind(this));
+        this.aircoSamsung.getCharacteristic(Characteristic.SwingMode) // '스윙 모드' 특성
+            .on('get', this.getSwingMode.bind(this))
+            .on('set', this.setSwingMode.bind(this));
      
      
         this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature) // '현재 온도' 특성
@@ -218,9 +218,10 @@ class SamsungAirco {
             .setProps({ minValue: 18, maxValue: 30, minStep: 1 }) // 온도 범위 및 단계 설정
             .on('get', this.getTargetTemperature.bind(this))
             .on('set', this.setTargetTemperature.bind(this));
-        this.aircoSamsung.getCharacteristic(Characteristic.SwingMode) // '스윙 모드' 특성
-            .on('get', this.getSwingMode.bind(this))
-            .on('set', this.setSwingMode.bind(this));
+
+        this.aircoSamsung.getCharacteristic(Characteristic.Active) // '활성' 특성 (전원 On/Off)Add commentMore actions
+            .on('get', this.getActive.bind(this))
+            .on('set', this.setActive.bind(this));
         return [this.informationService, this.aircoSamsung];
     }
 
