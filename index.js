@@ -209,6 +209,7 @@ class SamsungAirco {
         // 이 특성은 홈 앱의 상세 화면에 팬 속도 조절 슬라이더를 추가합니다.
         // 실제 팬 속도 제어 로직은 없지만, 기본값을 반환하도록 설정합니다.
         this.aircoSamsung.getCharacteristic(Characteristic.RotationSpeed)
+           .setProps({ hidden: true }) // ← 이 부분을 추가하여 HomeKit에 숨김 처리
             .on('get', (callback) => {
                 // 현재 팬 속도 값을 API에서 가져오는 로직이 없으므로, 기본값 100을 반환합니다.
                 callback(null, 100);
