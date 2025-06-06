@@ -205,20 +205,6 @@ class SamsungAirco {
             .on('get', this.getActive.bind(this))
             .on('set', this.setActive.bind(this));
      
-          // ✅ 수정된 부분: 팬 속도(RotationSpeed) 특성을 추가하여 서비스의 복잡성을 명확히 합니다.
-        // 이 특성은 홈 앱의 상세 화면에 팬 속도 조절 슬라이더를 추가합니다.
-        // 실제 팬 속도 제어 로직은 없지만, 기본값을 반환하도록 설정합니다.
-        this.aircoSamsung.getCharacteristic(Characteristic.RotationSpeed)
-           .setProps({ hidden: true }) // ← 이 부분을 추가하여 HomeKit에 숨김 처리
-            .on('get', (callback) => {
-                // 현재 팬 속도 값을 API에서 가져오는 로직이 없으므로, 기본값 100을 반환합니다.
-                callback(null, 100);
-            })
-            .on('set', (value, callback) => {
-                // 실제 팬 속도 제어 로직이 없으므로, 설정만 받고 성공으로 처리합니다.
-                this.log.info(`Fan speed set to ${value}, but not controlled by API.`);
-                callback(null);
-            });
      
         this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature) // '현재 온도' 특성
             .on('get', this.getCurrentTemperature.bind(this));
