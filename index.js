@@ -171,9 +171,12 @@ class SamsungAirco {
      * @returns {Service[]} - 서비스 목록 배열
      */
     getServices() {
-        // 이 서비스가 액세서리의 '대표'임을 명시하여, 타일 탭 문제를 해결합니다.
-        this.aircoSamsung.setPrimaryService(true);
 
+        // '물리 제어 잠금' 특성을 '자동 청소' 스위치로 활용
+        this.aircoSamsung.getCharacteristic(Characteristic.LockPhysicalControls)
+            .on('get', this.getLockPhysicalControls.bind(this))
+            .on('set', this.setLockPhysicalControls.bind(this));
+        
         // '스윙 모드' 특성
         this.aircoSamsung.getCharacteristic(Characteristic.SwingMode)
             .on('get', this.getSwingMode.bind(this))
@@ -199,15 +202,13 @@ class SamsungAirco {
             .on('get', this.getTargetTemperature.bind(this))
             .on('set', this.setTargetTemperature.bind(this));
 
+        // 이 서비스가 액세서리의 '대표'임을 명시하여, 타일 탭 문제를 해결합니다.
+        this.aircoSamsung.setPrimaryService(true);
+
         // '활성' 특성 (전원 On/Off)
         this.aircoSamsung.getCharacteristic(Characteristic.Active)
             .on('get', this.getActive.bind(this))
-            .on('set', this.setActive.bind(this));
-        
-        // '물리 제어 잠금' 특성을 '자동 청소' 스위치로 활용
-        this.aircoSamsung.getCharacteristic(Characteristic.LockPhysicalControls)
-            .on('get', this.getLockPhysicalControls.bind(this))
-            .on('set', this.setLockPhysicalControls.bind(this));
+            .on('set', this.setActive.bind(this));        
 
         return [this.informationService, this.aircoSamsung];
     }
