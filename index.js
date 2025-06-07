@@ -75,7 +75,7 @@ class SamsungAirco {
         this.informationService = new Service.AccessoryInformation() // 기기 정보 서비스
             .setCharacteristic(Characteristic.Manufacturer, 'Samsung')
             .setCharacteristic(Characteristic.Model, 'Air Conditioner')
-            .setCharacteristic(Characteristic.SerialNumber, config.serialNumber || 'DefaultSN');
+            .setCharacteristic(Characteristic.SerialNumber, config.serialNumber || 'AF16K7970WFN');
     }
 
     // --- 네이티브 https 모듈을 사용하여 "raw" HTTP 요청을 보내는 헬퍼 함수 ---
@@ -204,6 +204,11 @@ class SamsungAirco {
         this.aircoSamsung.getCharacteristic(Characteristic.SwingMode) // '스윙 모드' 특성
             .on('get', this.getSwingMode.bind(this))
             .on('set', this.setSwingMode.bind(this));
+
+           // ✅ '물리 제어 잠금' 특성을 추가하여 '자동 청소' 기능으로 활용합니다.
+        this.aircoSamsung.getCharacteristic(Characteristic.LockPhysicalControls)
+          .on('get', this.getLockPhysicalControls.bind(this))
+          .on('set', this.setLockPhysicalControls.bind(this));
      
      
         this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature) // '현재 온도' 특성
@@ -333,6 +338,50 @@ class SamsungAirco {
         promise.then(() => callback(null)).catch(error => callback(error));
     }
 
+    /**
+     * 현재 자동청소 설정 상태를 가져옵니다.
+     * API 응답의 'options' 배열에 "Autoclean_On"이 포함되어 있는지 확인합니다.
+     */
+    getLockPhysicalControls(callback) {
+        this.getCachedState().then(state => {
+            const isEnabled = state.Mode.options.includes("Autoclean_On");
+            this.log.info(`Auto-Clean is ${isEnabled ? 'ON' : 'OFF'}`);
+            callback(null, isEnabled ? Characteristic.LockPhysicalControls.CONTROL_LOCK_ENABLED : Characteristic.LockPhysicalControls.CONTROL_LOCK_DISABLED);
+        }).catch(error => {
+            callback(error);
+        });
+    }
+
+    /**
+     * 자동청소 상태를 설정합니다.
+     * 다른 옵션(예: 무풍 모드)이 초기화되지 않도록 현재 옵션 상태를 먼저 읽고,
+     * 자동청소 관련 값만 변경하여 다시 전송하는 안전한 방식을 사용합니다.
+     */
+    setLockPhysicalControls(value, callback) {
+        // 1. 현재 상태를 먼저 가져옵니다.
+        this.getCachedState().then(state => {
+            // 2. 현재 옵션 목록을 복사합니다.
+            let currentOptions = [...state.Mode.options];
+            
+            // 3. 기존의 자동청소 관련 옵션을 배열에서 제거합니다.
+            currentOptions = currentOptions.filter(opt => opt !== 'Autoclean_On' && opt !== 'Autoclean_Off');
+            
+            // 4. 홈킷에서 받은 새로운 상태값을 배열에 추가합니다.
+            const newAutocleanState = value === Characteristic.LockPhysicalControls.CONTROL_LOCK_ENABLED ? 'Autoclean_On' : 'Autoclean_Off';
+            currentOptions.push(newAutocleanState);
+            
+            this.log.info(`Setting Auto-Clean to: ${newAutocleanState}`);
+
+            // 5. 수정된 전체 옵션 배열을 API로 전송합니다.
+            this.sendCommand('/mode', { options: currentOptions })
+                .then(() => callback(null))
+                .catch(error => callback(error));
+
+        }).catch(error => {
+            callback(error);
+        });
+    }
+ 
     // 현재 운전 상태를 가져와서 전달
     getCurrentHeaterCoolerState(callback) {
         this.getCachedState().then(state => {
