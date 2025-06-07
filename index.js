@@ -174,11 +174,11 @@ class SamsungAirco {
         // 이 서비스가 액세서리의 '대표'임을 명시하여, 타일 탭 문제를 해결합니다.
         this.aircoSamsung.setPrimaryService(true);
 
-        // '활성' 특성 (전원 On/Off)
-        this.aircoSamsung.getCharacteristic(Characteristic.Active)
-            .on('get', this.getActive.bind(this))
-            .on('set', this.setActive.bind(this));
-
+        // '스윙 모드' 특성
+        this.aircoSamsung.getCharacteristic(Characteristic.SwingMode)
+            .on('get', this.getSwingMode.bind(this))
+            .on('set', this.setSwingMode.bind(this));
+        
         // '현재 온도' 특성
         this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature)
             .on('get', this.getCurrentTemperature.bind(this));
@@ -199,10 +199,10 @@ class SamsungAirco {
             .on('get', this.getTargetTemperature.bind(this))
             .on('set', this.setTargetTemperature.bind(this));
 
-        // '스윙 모드' 특성
-        this.aircoSamsung.getCharacteristic(Characteristic.SwingMode)
-            .on('get', this.getSwingMode.bind(this))
-            .on('set', this.setSwingMode.bind(this));
+        // '활성' 특성 (전원 On/Off)
+        this.aircoSamsung.getCharacteristic(Characteristic.Active)
+            .on('get', this.getActive.bind(this))
+            .on('set', this.setActive.bind(this));
         
         // '물리 제어 잠금' 특성을 '자동 청소' 스위치로 활용
         this.aircoSamsung.getCharacteristic(Characteristic.LockPhysicalControls)
@@ -233,8 +233,8 @@ class SamsungAirco {
             } else {
                 this.log.info('전원을 켠 후, "청정 건조" 모드로 설정합니다...');
                 await this.sendCommand('', { Operation: { power: 'On' } });
-                this.log.info('전원 켜짐. 2초 후 모드를 설정합니다...');
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                this.log.info('전원 켜짐. 6초 후 모드를 설정합니다...');
+                await new Promise(resolve => setTimeout(resolve, 6000));
                 await this.sendCommand('/mode', { modes: ['DryClean'] });
                 this.log.info('성공적으로 전원을 켜고 운전 모드를 설정했습니다.');
                 this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).updateValue(Characteristic.CurrentHeaterCoolerState.COOLING);
