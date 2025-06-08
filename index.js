@@ -180,16 +180,6 @@ class SamsungAirco {
             .on('get', this.getActive.bind(this))
             .on('set', this.setActive.bind(this)); 
             
-          // '물리 제어 잠금' 특성을 '자동 청소' 스위치로 활용
-        this.aircoSamsung.getCharacteristic(Characteristic.LockPhysicalControls)
-            .on('get', this.getLockPhysicalControls.bind(this))
-            .on('set', this.setLockPhysicalControls.bind(this));
-        
-        // '스윙 모드' 특성
-        this.aircoSamsung.getCharacteristic(Characteristic.SwingMode)
-            .on('get', this.getSwingMode.bind(this))
-            .on('set', this.setSwingMode.bind(this));
-                  
         // '현재 온도' 특성
         this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature)
             .on('get', this.getCurrentTemperature.bind(this));
@@ -210,7 +200,15 @@ class SamsungAirco {
             .on('get', this.getTargetTemperature.bind(this))
             .on('set', this.setTargetTemperature.bind(this));
 
-    
+        // '물리 제어 잠금' 특성을 '자동 청소' 스위치로 활용
+        this.aircoSamsung.getCharacteristic(Characteristic.LockPhysicalControls)
+            .on('get', this.getLockPhysicalControls.bind(this))
+            .on('set', this.setLockPhysicalControls.bind(this));
+        
+        // '스윙 모드' 특성
+        this.aircoSamsung.getCharacteristic(Characteristic.SwingMode)
+            .on('get', this.getSwingMode.bind(this))
+            .on('set', this.setSwingMode.bind(this));    
 
         return [this.informationService, this.aircoSamsung];
     }
