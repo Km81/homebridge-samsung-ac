@@ -11,58 +11,57 @@ var Service, Characteristic, Accessory;
 
 // 이 함수는 Homebridge가 플러그인을 로드할 때 최초로 실행되는 부분입니다.
 module.exports = function(homebridge) {
-    // Homebridge의 핵심 클래스들을 전역 변수에 할당하여 플러그인 전체에서 사용할 수 있게 합니다.
-    Service = homebridge.hap.Service;
-    Characteristic = homebridge.hap.Characteristic;
-    Accessory = homebridge.hap.Accessory;
+    // Homebridge의 핵심 클래스들을 전역 변수에 할당하여 플러그인 전체에서 사용할 수 있게 합니다.
+    Service = homebridge.hap.Service;
+    Characteristic = homebridge.hap.Characteristic;
+    Accessory = homebridge.hap.Accessory;
 
-    // 이 플러그인을 Homebridge에 공식적으로 등록합니다.
-    homebridge.registerAccessory('homebridge-samsung-ac', 'SamsungAC', SamsungAirco);
+    // 이 플러그인을 Homebridge에 공식적으로 등록합니다.
+    homebridge.registerAccessory('homebridge-samsung-ac', 'SamsungAC', SamsungAirco);
 }
 
 // 삼성 에어컨 액세서리의 모든 로직을 담고 있는 메인 클래스입니다.
 class SamsungAirco {
-    // 생성자 함수: Homebridge가 config.json을 기반으로 이 액세서리를 초기화할 때 실행됩니다.
-    constructor(log, config) {
-        this.log = log;
-        this.name = config.name;
+    constructor(log, config) {
+        this.log = log;
+        this.name = config.name;
 
-        // --- config.json에서 가져온 주요 설정값들 ---
-        this.ip = config.ip;
-        this.token = config.token;
-        this.patchCert = config.patchCert;
+        // --- config.json에서 가져온 주요 설정값들 ---
+        this.ip = config.ip;
+        this.token = config.token;
+        this.patchCert = config.patchCert;
 
-        // --- 다양한 에어컨 모델을 지원하기 위한 설정 ---
-        this.deviceIndex = config.deviceIndex || 0;
-        this.setDeviceIndex = config.setDeviceIndex ?? this.deviceIndex;
-        this.swingModeType = config.swingModeType || 'comfort';
-        this.cacheDuration = config.cacheDuration || 3000;
+        // --- 다양한 에어컨 모델을 지원하기 위한 설정 ---
+        this.deviceIndex = config.deviceIndex || 0;
+        this.setDeviceIndex = config.setDeviceIndex ?? this.deviceIndex;
+        this.swingModeType = config.swingModeType || 'comfort';
+        this.cacheDuration = config.cacheDuration || 3000;
 
-        if (!this.ip || !this.token || !this.patchCert) {
-            this.log.error("IP, 토큰, 인증서 경로(patchCert)는 필수 설정 항목입니다.");
-            return;
-        }
+        if (!this.ip || !this.token || !this.patchCert) {
+            this.log.error("IP, 토큰, 인증서 경로(patchCert)는 필수 설정 항목입니다.");
+            return;
+        }
 
-        // --- 모든 SSL/TLS 통신 오류 해결을 위한 핵심 에이전트 설정 ---
-        this.httpsAgent = new https.Agent({
-            cert: fs.readFileSync(this.patchCert), // 클라이언트 '인증서'
-            key: fs.readFileSync(this.patchCert),  // 클라이언트 '비공개 키' (상호 인증용)
-            rejectUnauthorized: false,             // 자체 서명 인증서 허용
-            ciphers: 'DEFAULT@SECLEVEL=1',         // 약한 암호화 방식(ca md too weak) 허용
-            secureProtocol: 'TLSv1_method'       // 구형 프로토콜(unsupported protocol) 사용 강제
-        });
+        // --- 모든 SSL/TLS 통신 오류 해결을 위한 핵심 에이전트 설정 ---
+        this.httpsAgent = new https.Agent({
+            cert: fs.readFileSync(this.patchCert), // 클라이언트 '인증서'
+            key: fs.readFileSync(this.patchCert),  // 클라이언트 '비공개 키'
+            rejectUnauthorized: false,             // 자체 서명 인증서 허용
+            ciphers: 'DEFAULT@SECLEVEL=1',         // 약한 암호화 방식 허용
+            secureProtocol: 'TLSv1_method'         // 구형 프로토콜 사용 강제
+        });
 
-        // --- 상태 캐싱을 위한 변수 초기화 ---
-        this.deviceState = null;
-        this.lastStateUpdate = 0;
+        // --- 상태 캐싱을 위한 변수 초기화 ---
+        this.deviceState = null;
+        this.lastStateUpdate = 0;
 
-        // --- 홈 앱에 표시될 서비스 생성 ---
-        this.aircoSamsung = new Service.HeaterCooler(this.name, 'SamsungAircon-Primary');
-        this.informationService = new Service.AccessoryInformation()
-            .setCharacteristic(Characteristic.Manufacturer, 'Samsung')
-            .setCharacteristic(Characteristic.Model, 'Air Conditioner')
-            .setCharacteristic(Characteristic.SerialNumber, config.serialNumber || 'AF16K7970WFN');
-    }
+        // --- 홈 앱에 표시될 서비스 생성 ---
+        this.aircoSamsung = new Service.HeaterCooler(this.name, 'SamsungAircon-Primary');
+        this.informationService = new Service.AccessoryInformation()
+            .setCharacteristic(Characteristic.Manufacturer, 'Samsung')
+            .setCharacteristic(Characteristic.Model, 'Air Conditioner')
+            .setCharacteristic(Characteristic.SerialNumber, config.serialNumber || 'AF16K7970WFN');
+    }
 
     /**
      * 네이티브 https 모듈을 사용하여 "raw" HTTP 요청을 보내는 헬퍼 함수
@@ -170,49 +169,52 @@ class SamsungAirco {
      * 이 액세서리가 홈 앱에 제공할 모든 서비스와 특성(기능)을 정의하고 반환하는 함수.
      * @returns {Service[]} - 서비스 목록 배열
      */
-    getServices() {
+    getServices() {
+        // 이 서비스가 액세서리의 '대표'임을 명시합니다.
+        this.aircoSamsung.setPrimaryService(true);
 
-        // 이 서비스가 액세서리의 '대표'임을 명시하여, 타일 탭 문제를 해결합니다.
-        this.aircoSamsung.setPrimaryService(true);
+        // --- Active 특성 재등록: 기존 제거 후 subtype 'power'로 고정 추가 ---
+        const svc = this.aircoSamsung;
+        // 기존 Active 제거
+        svc.removeCharacteristic(svc.getCharacteristic(Characteristic.Active));
+        // subtype 'power'로 Active 신규 추가
+        svc.addCharacteristic(Characteristic.Active, 'power')
+           .on('get', this.getActive.bind(this))
+           .on('set', this.setActive.bind(this));
 
-        // '활성' 특성 (전원 On/Off)
-        this.aircoSamsung.getCharacteristic(Characteristic.Active,     'power')
-            .on('get', this.getActive.bind(this))
-            .on('set', this.setActive.bind(this)); 
-        
         // '물리 제어 잠금' 특성을 '자동 청소' 스위치로 활용
-        this.aircoSamsung.getCharacteristic(Characteristic.LockPhysicalControls)
+        svc.getCharacteristic(Characteristic.LockPhysicalControls)
             .on('get', this.getLockPhysicalControls.bind(this))
             .on('set', this.setLockPhysicalControls.bind(this));
-        
+
         // '스윙 모드' 특성
-        this.aircoSamsung.getCharacteristic(Characteristic.SwingMode,  'swingMode')
-            .on('get', this.getSwingMode.bind(this))
-            .on('set', this.setSwingMode.bind(this));
-        
-        // '현재 온도' 특성
-        this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature)
-            .on('get', this.getCurrentTemperature.bind(this));
+        svc.getCharacteristic(Characteristic.SwingMode, 'swingMode')
+            .on('get', this.getSwingMode.bind(this))
+            .on('set', this.setSwingMode.bind(this));
 
-        // '목표 냉난방기 상태' 특성 (모드 선택)
-        this.aircoSamsung.getCharacteristic(Characteristic.TargetHeaterCoolerState)
-            .setProps({ validValues: [Characteristic.TargetHeaterCoolerState.COOL] }) // '냉방' 모드만 표시
-            .on('get', this.getTargetHeaterCoolerState.bind(this))
-            .on('set', this.setTargetHeaterCoolerState.bind(this));
+        // '현재 온도' 특성
+        svc.getCharacteristic(Characteristic.CurrentTemperature)
+            .on('get', this.getCurrentTemperature.bind(this));
 
-        // '현재 냉난방기 상태' 특성
-        this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState)
-            .on('get', this.getCurrentHeaterCoolerState.bind(this));
+        // '목표 냉난방기 상태' 특성 (냉방 모드만)
+        svc.getCharacteristic(Characteristic.TargetHeaterCoolerState)
+            .setProps({ validValues: [Characteristic.TargetHeaterCoolerState.COOL] })
+            .on('get', this.getTargetHeaterCoolerState.bind(this))
+            .on('set', this.setTargetHeaterCoolerState.bind(this));
 
-        // '냉방 설정 온도' 특성
-        this.aircoSamsung.getCharacteristic(Characteristic.CoolingThresholdTemperature)
-            .setProps({ minValue: 18, maxValue: 30, minStep: 1 })
-            .on('get', this.getTargetTemperature.bind(this))
-            .on('set', this.setTargetTemperature.bind(this));      
+        // '현재 냉난방기 상태' 특성
+        svc.getCharacteristic(Characteristic.CurrentHeaterCoolerState)
+            .on('get', this.getCurrentHeaterCoolerState.bind(this));
 
-        return [this.informationService, this.aircoSamsung];
-    }
-    
+        // '냉방 설정 온도' 특성
+        svc.getCharacteristic(Characteristic.CoolingThresholdTemperature)
+            .setProps({ minValue: 18, maxValue: 30, minStep: 1 })
+            .on('get', this.getTargetTemperature.bind(this))
+            .on('set', this.setTargetTemperature.bind(this));
+
+        return [this.informationService, this.aircoSamsung];
+    }
+    
     // --- Getters & Setters ---
     // 각 특성의 상태를 가져오거나(get) 설정(set)하는 함수들.
     // async/await를 사용하여 비동기 로직을 더 읽기 쉽게 작성했습니다.
