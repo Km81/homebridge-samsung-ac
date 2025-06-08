@@ -170,28 +170,34 @@ class SamsungAirco {
      * @returns {Service[]} - 서비스 목록 배열
      */
     getServices() {
-        // 이 서비스가 액세서리의 '대표'임을 명시합니다.
-        this.aircoSamsung.setPrimaryService(true);
-
-        // --- Active 특성 재등록: 기존 제거 후 subtype 'power'로 고정 추가 ---
         const svc = this.aircoSamsung;
-        // 기존 Active 제거
-        svc.removeCharacteristic(svc.getCharacteristic(Characteristic.Active));
-        // subtype 'power'로 Active 신규 추가
-        svc.addCharacteristic(Characteristic.Active, 'power')
-           .on('get', this.getActive.bind(this))
-           .on('set', this.setActive.bind(this));
+        svc.setPrimaryService(true);
 
+        // 1) 기본 Active 제거
+        svc.removeCharacteristic(svc.getCharacteristic(Characteristic.Active));
+        // 2) subtype 'power'로 새 Active 생성 및 추가
+        const powerChar = new Characteristic(
+            'Active',
+            Characteristic.Active.UUID,
+            'power'
+        );
+        powerChar
+            .on('get', this.getActive.bind(this))
+            .on('set', this.setActive.bind(this));
+        svc.addCharacteristic(powerChar);
+
+        // 3) Boolean 특성들
         // '물리 제어 잠금' 특성을 '자동 청소' 스위치로 활용
-        svc.getCharacteristic(Characteristic.LockPhysicalControls)
+        svc.getCharacteristic(Characteristic.LockPhysicalControls, 'lockControls')
             .on('get', this.getLockPhysicalControls.bind(this))
             .on('set', this.setLockPhysicalControls.bind(this));
 
-        // '스윙 모드' 특성
+         // '스윙 모드' 특성           
         svc.getCharacteristic(Characteristic.SwingMode, 'swingMode')
             .on('get', this.getSwingMode.bind(this))
             .on('set', this.setSwingMode.bind(this));
 
+        // 4) 비-Boolean 특성들
         // '현재 온도' 특성
         svc.getCharacteristic(Characteristic.CurrentTemperature)
             .on('get', this.getCurrentTemperature.bind(this));
