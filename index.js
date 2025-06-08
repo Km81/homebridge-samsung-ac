@@ -45,11 +45,11 @@ class SamsungAirco {
 
         // --- 모든 SSL/TLS 통신 오류 해결을 위한 핵심 에이전트 설정 ---
         this.httpsAgent = new https.Agent({
-            cert: fs.readFileSync(this.patchCert),
-            key: fs.readFileSync(this.patchCert),
-            rejectUnauthorized: false,
-            ciphers: 'DEFAULT@SECLEVEL=1',
-            secureProtocol: 'TLSv1_method'
+            cert: fs.readFileSync(this.patchCert), // 클라이언트 '인증서'
+            key: fs.readFileSync(this.patchCert),  // 클라이언트 '비공개 키' (상호 인증용)
+            rejectUnauthorized: false,             // 자체 서명 인증서 허용
+            ciphers: 'DEFAULT@SECLEVEL=1',         // 약한 암호화 방식(ca md too weak) 허용
+            secureProtocol: 'TLSv1_method'       // 구형 프로토콜(unsupported protocol) 사용 강제
         });
 
         // --- 상태 캐싱을 위한 변수 초기화 ---
@@ -64,6 +64,13 @@ class SamsungAirco {
             .setCharacteristic(Characteristic.SerialNumber, config.serialNumber || 'AF16K7970WFN');
     }
 
+    /**
+     * 네이티브 https 모듈을 사용하여 "raw" HTTP 요청을 보내는 헬퍼 함수
+     * @param {string} method - 'GET' 또는 'PUT'
+     * @param {string} path - API 경로 (예: '/devices')
+     * @param {object | null} data - PUT 요청 시 보낼 데이터
+     * @returns {Promise<object>} - 성공 시 JSON 응답 객체를, 실패 시 에러를 포함한 Promise
+     */
     _request(method, path, data = null) {
         return new Promise((resolve, reject) => {
             const options = {
@@ -110,6 +117,10 @@ class SamsungAirco {
         });
     }
 
+    /**
+     * 불필요한 API 호출을 줄여 성능을 향상시키는 핵심 함수.
+     * @returns {Promise<object>} - 에어컨의 현재 상태 객체를 포함한 Promise
+     */
     async getCachedState() {
         const now = Date.now();
         if (this.deviceState && (now - this.lastStateUpdate < this.cacheDuration)) {
@@ -132,8 +143,13 @@ class SamsungAirco {
         }
     }
 
+    /**
+     * 에어컨에 제어 명령을 보내는 헬퍼 함수.
+     * @param {string} endpoint - API 엔드포인트 (예: '/mode')
+     * @param {object} data - 전송할 JSON 데이터
+     */
     async sendCommand(endpoint, data) {
-        const fullEndpoint = `/devices/<span class="math-inline">\{this\.setDeviceIndex\}</span>{endpoint}`;
+        const fullEndpoint = `/devices/${this.setDeviceIndex}${endpoint}`;
         try {
             await this._request('PUT', fullEndpoint, data);
             this.log.info(`명령어를 ${fullEndpoint}(으)로 성공적으로 보냈습니다.`);
@@ -150,18 +166,37 @@ class SamsungAirco {
         callback();
     }
 
+    /**
+     * 이 액세서리가 홈 앱에 제공할 모든 서비스와 특성(기능)을 정의하고 반환하는 함수.
+     * @returns {Service[]} - 서비스 목록 배열
+     */
     getServices() {
-        // 이 서비스가 액세서리의 '대표'임을 명시하여, 타일 탭 문제를 해결합니다.
+
+         // 이 서비스가 액세서리의 '대표'임을 명시하여, 타일 탭 문제를 해결합니다.
         this.aircoSamsung.setPrimaryService(true);
 
-        // 가장 중요한 '활성' 특성(전원)을 제일 먼저 정의하여 홈킷에 중요도를 암시합니다.
+        // '활성' 특성 (전원 On/Off)
         this.aircoSamsung.getCharacteristic(Characteristic.Active)
             .on('get', this.getActive.bind(this))
-            .on('set', this.setActive.bind(this));
+            .on('set', this.setActive.bind(this)); 
+            
+          // '물리 제어 잠금' 특성을 '자동 청소' 스위치로 활용
+        this.aircoSamsung.getCharacteristic(Characteristic.LockPhysicalControls)
+            .on('get', this.getLockPhysicalControls.bind(this))
+            .on('set', this.setLockPhysicalControls.bind(this));
+        
+        // '스윙 모드' 특성
+        this.aircoSamsung.getCharacteristic(Characteristic.SwingMode)
+            .on('get', this.getSwingMode.bind(this))
+            .on('set', this.setSwingMode.bind(this));
+                  
+        // '현재 온도' 특성
+        this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature)
+            .on('get', this.getCurrentTemperature.bind(this));
 
         // '목표 냉난방기 상태' 특성 (모드 선택)
         this.aircoSamsung.getCharacteristic(Characteristic.TargetHeaterCoolerState)
-            .setProps({ validValues: [Characteristic.TargetHeaterCoolerState.COOL] })
+            .setProps({ validValues: [Characteristic.TargetHeaterCoolerState.COOL] }) // '냉방' 모드만 표시
             .on('get', this.getTargetHeaterCoolerState.bind(this))
             .on('set', this.setTargetHeaterCoolerState.bind(this));
 
@@ -169,29 +204,21 @@ class SamsungAirco {
         this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState)
             .on('get', this.getCurrentHeaterCoolerState.bind(this));
 
-        // '현재 온도' 특성
-        this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature)
-            .on('get', this.getCurrentTemperature.bind(this));
-
         // '냉방 설정 온도' 특성
         this.aircoSamsung.getCharacteristic(Characteristic.CoolingThresholdTemperature)
             .setProps({ minValue: 18, maxValue: 30, minStep: 1 })
             .on('get', this.getTargetTemperature.bind(this))
             .on('set', this.setTargetTemperature.bind(this));
 
-        // '스윙 모드' 특성
-        this.aircoSamsung.getCharacteristic(Characteristic.SwingMode)
-            .on('get', this.getSwingMode.bind(this))
-            .on('set', this.setSwingMode.bind(this));
-        
-        // '자동 청소' 스위치
-        this.aircoSamsung.getCharacteristic(Characteristic.LockPhysicalControls)
-            .on('get', this.getLockPhysicalControls.bind(this))
-            .on('set', this.setLockPhysicalControls.bind(this));
+    
 
         return [this.informationService, this.aircoSamsung];
     }
     
+    // --- Getters & Setters ---
+    // 각 특성의 상태를 가져오거나(get) 설정(set)하는 함수들.
+    // async/await를 사용하여 비동기 로직을 더 읽기 쉽게 작성했습니다.
+
     async getActive(callback) {
         try {
             const state = await this.getCachedState();
@@ -209,8 +236,8 @@ class SamsungAirco {
             } else {
                 this.log.info('전원을 켠 후, "청정 건조" 모드로 설정합니다...');
                 await this.sendCommand('', { Operation: { power: 'On' } });
-                this.log.info('전원 켜짐. 2초 후 모드를 설정합니다...');
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                this.log.info('전원 켜짐. 6초 후 모드를 설정합니다...');
+                await new Promise(resolve => setTimeout(resolve, 6000));
                 await this.sendCommand('/mode', { modes: ['DryClean'] });
                 this.log.info('성공적으로 전원을 켜고 운전 모드를 설정했습니다.');
                 this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).updateValue(Characteristic.CurrentHeaterCoolerState.COOLING);
@@ -266,6 +293,7 @@ class SamsungAirco {
 
     async setSwingMode(value, callback) {
         try {
+            // '400 Bad Request' 오류를 피하기 위해, 변경하려는 옵션만 단독으로 전송합니다.
             if (this.swingModeType === 'wind') {
                 const direction = value === Characteristic.SwingMode.SWING_ENABLED ? "Up_And_Low" : "Fix";
                 await this.sendCommand('/wind', { direction: direction });
@@ -296,6 +324,8 @@ class SamsungAirco {
             const newAutocleanState = value === Characteristic.LockPhysicalControls.CONTROL_LOCK_ENABLED ? 'Autoclean_On' : 'Autoclean_Off';
             
             this.log.info(`자동 청소 설정 변경: ${newAutocleanState}`);
+            // 다른 옵션을 덮어쓰지 않기 위해 시도했던 '읽고-수정-쓰기' 방식이 400 오류를 유발.
+            // 따라서 단일 옵션만 보내는 간결한 방식으로 최종 수정.
             await this.sendCommand('/mode', { options: [newAutocleanState] });
             callback(null);
         } catch (error) {
@@ -307,7 +337,7 @@ class SamsungAirco {
         try {
             const state = await this.getCachedState();
             const currentMode = state.Mode.modes[0];
-            const coolModes = ["CoolClean", "Cool", "Dry", "DryClean", "Auto", "Wind"];
+            const coolModes = ["CoolClean", "Cool", "Dry", "DryClean", "Auto", "Wind"];
 
             if (coolModes.includes(currentMode)) {
                 callback(null, Characteristic.CurrentHeaterCoolerState.COOLING);
