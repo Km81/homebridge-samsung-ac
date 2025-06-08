@@ -171,58 +171,65 @@ class SamsungAirco {
      */
     getServices() {
         const svc = this.aircoSamsung;
+        // 이 서비스가 대표 서비스임을 설정
         svc.setPrimaryService(true);
 
-        // 1) 기본 Active 제거
+        // 1) Active 특성 재설정: 기본 제거 후 subtype 'power'로 새 인스턴스 추가
         svc.removeCharacteristic(svc.getCharacteristic(Characteristic.Active));
-        // 2) subtype 'power'로 새 Active 생성 및 추가
         const powerChar = new Characteristic(
             'Active',
             Characteristic.Active.UUID,
             'power'
-        );
-        powerChar
+        )
             .on('get', this.getActive.bind(this))
             .on('set', this.setActive.bind(this));
         svc.addCharacteristic(powerChar);
 
-        // 3) Boolean 특성들
-        // '물리 제어 잠금' 특성을 '자동 청소' 스위치로 활용
-        svc.getCharacteristic(Characteristic.LockPhysicalControls, 'lockControls')
+        // 2) LockPhysicalControls 특성 재설정
+        svc.removeCharacteristic(svc.getCharacteristic(Characteristic.LockPhysicalControls));
+        const lockChar = new Characteristic(
+            'Lock Physical Controls',
+            Characteristic.LockPhysicalControls.UUID,
+            'lockControls'
+        )
             .on('get', this.getLockPhysicalControls.bind(this))
             .on('set', this.setLockPhysicalControls.bind(this));
+        svc.addCharacteristic(lockChar);
 
-         // '스윙 모드' 특성           
-        svc.getCharacteristic(Characteristic.SwingMode, 'swingMode')
+        // 3) SwingMode 특성 재설정
+        svc.removeCharacteristic(svc.getCharacteristic(Characteristic.SwingMode));
+        const swingChar = new Characteristic(
+            'Swing Mode',
+            Characteristic.SwingMode.UUID,
+            'swingMode'
+        )
             .on('get', this.getSwingMode.bind(this))
             .on('set', this.setSwingMode.bind(this));
+        svc.addCharacteristic(swingChar);
 
-        // 4) 비-Boolean 특성들
-        // '현재 온도' 특성
+        // 4) 기타 특성
         svc.getCharacteristic(Characteristic.CurrentTemperature)
             .on('get', this.getCurrentTemperature.bind(this));
 
-        // '목표 냉난방기 상태' 특성 (냉방 모드만)
         svc.getCharacteristic(Characteristic.TargetHeaterCoolerState)
             .setProps({ validValues: [Characteristic.TargetHeaterCoolerState.COOL] })
             .on('get', this.getTargetHeaterCoolerState.bind(this))
             .on('set', this.setTargetHeaterCoolerState.bind(this));
 
-        // '현재 냉난방기 상태' 특성
         svc.getCharacteristic(Characteristic.CurrentHeaterCoolerState)
             .on('get', this.getCurrentHeaterCoolerState.bind(this));
 
-        // '냉방 설정 온도' 특성
         svc.getCharacteristic(Characteristic.CoolingThresholdTemperature)
             .setProps({ minValue: 18, maxValue: 30, minStep: 1 })
             .on('get', this.getTargetTemperature.bind(this))
             .on('set', this.setTargetTemperature.bind(this));
 
-// getServices() 끝, return [ ... ]; 직전
-this.aircoSamsung.characteristics.forEach(c => {
-  this.log.info(`🔍 Characteristic: ${c.displayName} / UUID=${c.UUID} / iid=${c.iid} / subtype=${c.subtype || '-'}`);
-});  
-        return [this.informationService, this.aircoSamsung];
+        // 디버그: subtype 확인
+        svc.characteristics.forEach(c => {
+            this.log.info(`🔍 특성: ${c.displayName} / UUID=${c.UUID} / subtype=${c.subtype||'-'}`);
+        });
+
+        return [this.informationService, svc];
     }
     
     // --- Getters & Setters ---
