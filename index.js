@@ -212,6 +212,10 @@ class SamsungAirco {
             .on('get', this.getTargetTemperature.bind(this))
             .on('set', this.setTargetTemperature.bind(this));
 
+// getServices() 끝, return [ ... ]; 직전
+this.aircoSamsung.characteristics.forEach(c => {
+  this.log.info(`🔍 Characteristic: ${c.displayName} / UUID=${c.UUID} / iid=${c.iid} / subtype=${c.subtype || '-'}`);
+});  
         return [this.informationService, this.aircoSamsung];
     }
     
