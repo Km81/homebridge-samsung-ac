@@ -166,52 +166,56 @@ class SamsungAirco {
         callback();
     }
 
-    /**
+    /**
      * 이 액세서리가 홈 앱에 제공할 모든 서비스와 특성(기능)을 정의하고 반환하는 함수.
      * @returns {Service[]} - 서비스 목록 배열
      */
-    getServices() {
+    getServices() {
+        // --- 핵심 수정 사항 ---
+        // 이 서비스가 액세서리의 '대표'임을 명시하여, 타일 탭 문제를 해결합니다.
+        this.aircoSamsung.setPrimaryService(true);
 
-         // 이 서비스가 액세서리의 '대표'임을 명시하여, 타일 탭 문제를 해결합니다.
-        this.aircoSamsung.setPrimaryService(true);
+        // 1. '활성' 특성 (전원 On/Off)을 가장 먼저 등록합니다.
+        // 이것이 홈 앱 타일의 기본 탭 동작이 됩니다.
+        this.aircoSamsung.getCharacteristic(Characteristic.Active)
+            .on('get', this.getActive.bind(this))
+            .on('set', this.setActive.bind(this));
 
-        // '활성' 특성 (전원 On/Off)
-        this.aircoSamsung.getCharacteristic(Characteristic.Active)
-            .on('get', this.getActive.bind(this))
-            .on('set', this.setActive.bind(this)); 
+        // 2. '현재 냉난방기 상태' 등록 (IDLE, COOLING 등)
+        this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState)
+            .on('get', this.getCurrentHeaterCoolerState.bind(this));
+
+        // 3. '목표 냉난방기 상태' 등록 (모드 선택)
+        // 사용자가 선택할 수 있는 모드를 제한합니다.
+        this.aircoSamsung.getCharacteristic(Characteristic.TargetHeaterCoolerState)
+            .setProps({ validValues: [Characteristic.TargetHeaterCoolerState.COOL] }) // '냉방' 모드만 허용
+            .on('get', this.getTargetHeaterCoolerState.bind(this))
+            .on('set', this.setTargetHeaterCoolerState.bind(this));
+
+        // 4. '현재 온도' 등록
+        this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature)
+            .on('get', this.getCurrentTemperature.bind(this));
+
+        // 5. '냉방 설정 온도' 등록
+        this.aircoSamsung.getCharacteristic(Characteristic.CoolingThresholdTemperature)
+            .setProps({ minValue: 18, maxValue: 30, minStep: 1 })
+            .on('get', this.getTargetTemperature.bind(this))
+            .on('set', this.setTargetTemperature.bind(this));
             
-        // '현재 온도' 특성
-        this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature)
-            .on('get', this.getCurrentTemperature.bind(this));
+        // 6. '스윙 모드' (바람 방향 또는 무풍) 등록
+        this.aircoSamsung.getCharacteristic(Characteristic.SwingMode)
+            .on('get', this.getSwingMode.bind(this))
+            .on('set', this.setSwingMode.bind(this));
 
-        // '목표 냉난방기 상태' 특성 (모드 선택)
-        this.aircoSamsung.getCharacteristic(Characteristic.TargetHeaterCoolerState)
-            .setProps({ validValues: [Characteristic.TargetHeaterCoolerState.COOL] }) // '냉방' 모드만 표시
-            .on('get', this.getTargetHeaterCoolerState.bind(this))
-            .on('set', this.setTargetHeaterCoolerState.bind(this));
-
-        // '현재 냉난방기 상태' 특성
-        this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState)
-            .on('get', this.getCurrentHeaterCoolerState.bind(this));
-
-        // '냉방 설정 온도' 특성
-        this.aircoSamsung.getCharacteristic(Characteristic.CoolingThresholdTemperature)
-            .setProps({ minValue: 18, maxValue: 30, minStep: 1 })
-            .on('get', this.getTargetTemperature.bind(this))
-            .on('set', this.setTargetTemperature.bind(this));
-
-        // '물리 제어 잠금' 특성을 '자동 청소' 스위치로 활용
+        // 7. '물리 제어 잠금'을 '자동 청소' 스위치로 활용
+        // 부가 기능이므로 마지막에 등록합니다.
         this.aircoSamsung.getCharacteristic(Characteristic.LockPhysicalControls)
             .on('get', this.getLockPhysicalControls.bind(this))
             .on('set', this.setLockPhysicalControls.bind(this));
-        
-        // '스윙 모드' 특성
-        this.aircoSamsung.getCharacteristic(Characteristic.SwingMode)
-            .on('get', this.getSwingMode.bind(this))
-            .on('set', this.setSwingMode.bind(this));    
 
-        return [this.informationService, this.aircoSamsung];
-    }
+        // 정보 서비스와 에어컨 서비스를 배열로 반환합니다.
+        return [this.informationService, this.aircoSamsung];
+    }
     
     // --- Getters & Setters ---
     // 각 특성의 상태를 가져오거나(get) 설정(set)하는 함수들.
