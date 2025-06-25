@@ -1,4 +1,4 @@
-// Version 1.6.7
+// Version 1.6.8
 'use strict';
 
 const https = require('https');
@@ -48,7 +48,7 @@ class SamsungAirco {
       autoClean: null
     };
 
-    this.log.info(`[${this.name}] 플러그인 초기화 중... 버전 1.6.7`);
+    this.log.info(`[${this.name}] 플러그인 초기화 중... 버전 1.6.8`);
 
     if (!this.ip || !this.token || !this.patchCert) {
       this.log.error(`[${this.name}] IP, 토큰, 인증서 경로는 필수입니다.`);
@@ -218,11 +218,13 @@ class SamsungAirco {
     this.aircoSamsung.setPrimaryService(true);
     const C = Characteristic;
 
+    // Active
     this.aircoSamsung.getCharacteristic(C.Active)
       .on('get', cb => this.handleGet(cb, '전원', s => s.Operation.power === 'On'))
       .on('set', (v, cb) => {
         this.log.info(`[${this.name}] [SET] 전원 -> ${v?'켜짐':'꺼짐'}`);
-        this.awaitingConfirmation = true; this.commandPowerWanted = v;
+        this.awaitingConfirmation = true;
+        this.commandPowerWanted = v;
         this.skipNextModeSet = true;
         this.deviceState.Operation.power = v?'On':'Off';
         this.aircoSamsung.updateCharacteristic(C.Active, v);
@@ -230,6 +232,16 @@ class SamsungAirco {
         this.sendCommand('', { Operation: { power: v?'On':'Off' } });
       });
 
+    // CurrentHeaterCoolerState
+    this.aircoSamsung.getCharacteristic(C.CurrentHeaterCoolerState)
+      .on('get', cb => this.handleGet(cb, '운전 상태', s => {
+        const ms = Array.isArray(s.Mode?.modes) ? s.Mode.modes : [];
+        return (s.Operation.power === 'On' && ms.some(m => ['Cool','Dry','Auto','Wind'].includes(m)))
+          ? C.CurrentHeaterCoolerState.COOLING
+          : C.CurrentHeaterCoolerState.IDLE;
+      }));
+
+    // TargetHeaterCoolerState
     this.aircoSamsung.getCharacteristic(C.TargetHeaterCoolerState)
       .setProps({ validValues: [C.TargetHeaterCoolerState.COOL] })
       .on('get', cb => { this.log.info(`[${this.name}] [GET] 목표 모드 -> 냉방`); cb(null, C.TargetHeaterCoolerState.COOL); })
@@ -245,7 +257,61 @@ class SamsungAirco {
         this.sendCommand('/mode', { modes: ['DryClean'] });
       });
 
-    // 이하 생략 없이 앞부분 동일...
+    // CurrentTemperature
+    this.aircoSamsung.getCharacteristic(C.CurrentTemperature)
+      .on('get', cb => this.handleGet(cb, '현재 온도', s => s.Temperatures[0]?.current));
+
+    // CoolingThresholdTemperature
+    this.aircoSamsung.getCharacteristic(C.CoolingThresholdTemperature)
+      .setProps({ minValue:18, maxValue:30, minStep:1 })
+      .on('get', cb => this.handleGet(cb, '목표 온도', s => s.Temperatures[0]?.desired))
+      .on('set', (v, cb) => {
+        this.log.info(`[${this.name}] [SET] 목표 온도 -> ${v}°C`);
+        this.deviceState.Temperatures[0].desired = v;
+        this.aircoSamsung.updateCharacteristic(C.CoolingThresholdTemperature, v);
+        cb(null);
+        this.sendCommand('/temperatures/0', { desired: v });
+      });
+
+    // SwingMode
+    this.aircoSamsung.getCharacteristic(C.SwingMode)
+      .on('get', cb => this.handleGet(cb, '스윙/무풍', s => {
+        const opts = Array.isArray(s.Mode?.options) ? s.Mode.options : [];
+        return this.swingModeType === 'wind'
+          ? s.Wind.direction === 'Up_And_Low'
+          : opts.includes('Comode_Nano');
+      }))
+      .on('set', (v, cb) => {
+        this.log.info(`[${this.name}] [SET] 스윙/무풍 -> ${v?'켜짐':'꺼짐'}`);
+        if (this.swingModeType === 'wind') {
+          this.deviceState.Wind.direction = v?'Up_And_Low':'Fix';
+        } else {
+          this.deviceState.Mode.options = [v?'Comode_Nano':'Comode_Off'];
+        }
+        this.aircoSamsung.updateCharacteristic(C.SwingMode, v);
+        cb(null);
+        const ep = this.swingModeType==='wind' ? '/wind' : '/mode';
+        const cmd = this.swingModeType==='wind'
+          ? { direction: v?'Up_And_Low':'Fix' }
+          : { options: [v?'Comode_Nano':'Comode_Off'] };
+        this.sendCommand(ep, cmd);
+      });
+
+    // LockPhysicalControls
+    this.aircoSamsung.getCharacteristic(C.LockPhysicalControls)
+      .on('get', cb => this.handleGet(cb, '자동 청소', s => {
+        const opts = Array.isArray(s.Mode?.options) ? s.Mode.options : [];
+        return opts.includes('Autoclean_On');
+      }))
+      .on('set', (v, cb) => {
+        this.log.info(`[${this.name}] [SET] 자동 청소 -> ${v?'켜짐':'꺼짐'}`);
+        this.deviceState.Mode.options = [v?'Autoclean_On':'Comode_Off'];
+        this.aircoSamsung.updateCharacteristic(C.LockPhysicalControls, v);
+        cb(null);
+        this.sendCommand('/mode', { options: [v?'Autoclean_On':'Comode_Off'] });
+      });
+
+    return [ this.informationService, this.aircoSamsung ];
   }
 
   async sendCommand(endpoint, data) {
