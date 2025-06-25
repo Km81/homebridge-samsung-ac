@@ -52,11 +52,9 @@ class SamsungAirco {
             secureProtocol: 'TLSv1_method'      // 구형 프로토콜(unsupported protocol) 사용 강제
         });
 
-        // --- 상태 캐싱 및 중복 요청 방지를 위한 변수 초기화 ---
+        // --- 상태 캐싱을 위한 변수 초기화 ---
         this.deviceState = null;
         this.lastStateUpdate = 0;
-        this.isFetching = false; // 현재 상태를 가져오는 중인지 확인하는 플래그
-        this.statePromise = null; // 진행 중인 요청을 저장하는 Promise
 
         // --- 홈 앱에 표시될 서비스 생성 ---
         this.aircoSamsung = new Service.HeaterCooler(this.name);
@@ -96,45 +94,25 @@ class SamsungAirco {
         });
     }
 
-    /**
-     * 동시 다발적인 요청을 하나의 네트워크 통신으로 묶어 처리하고, 로그를 명확히 하는 최적화 함수.
-     * @param {string} caller - 어떤 기능이 상태를 요청했는지 식별하는 문자열
-     * @returns {Promise<object>} - 에어컨의 현재 상태 객체를 포함한 Promise
-     */
-    async getCachedState(caller = '알 수 없는 요청') {
+    async getCachedState() {
         const now = Date.now();
         if (this.deviceState && (now - this.lastStateUpdate < this.cacheDuration)) {
             return this.deviceState;
         }
-
-        if (this.isFetching) {
-            this.log.debug(`'${caller}'(은)는 현재 진행 중인 상태 업데이트를 기다립니다.`);
-            return this.statePromise;
-        }
-
-        this.log.info(`'${caller}' 확인을 위해 기기에서 최신 상태를 가져옵니다...`);
-        this.statePromise = new Promise(async (resolve, reject) => {
-            this.isFetching = true;
-            try {
-                const responseData = await this._request('GET', '/devices');
-                this.deviceState = responseData.Devices[this.deviceIndex];
-                this.lastStateUpdate = Date.now();
-                this.log.debug(`'${caller}' 상태 업데이트 완료.`);
-                resolve(this.deviceState);
-            } catch (error) {
-                this.log.error(`'${caller}' 상태를 가져오는 데 실패했습니다: ${error.message}`);
-                if (this.deviceState) {
-                    this.log.warn('가져오기 오류로 인해 오래된 캐시 데이터를 반환합니다.');
-                    resolve(this.deviceState);
-                } else {
-                    reject(new Error('기기 상태를 가져올 수 없습니다.'));
-                }
-            } finally {
-                this.isFetching = false;
-                this.statePromise = null;
+        this.log.info('기기에서 최신 상태를 가져옵니다...');
+        try {
+            const responseData = await this._request('GET', '/devices');
+            this.deviceState = responseData.Devices[this.deviceIndex];
+            this.lastStateUpdate = now;
+            return this.deviceState;
+        } catch (error) {
+            this.log.error(`기기 상태를 가져오는 데 실패했습니다: ${error.message}`);
+            if (this.deviceState) {
+                this.log.warn('가져오기 오류로 인해 오래된 캐시 데이터를 반환합니다.');
+                return this.deviceState;
             }
-        });
-        return this.statePromise;
+            throw new Error('기기 상태를 가져올 수 없습니다.');
+        }
     }
 
     async sendCommand(endpoint, data) {
@@ -143,7 +121,7 @@ class SamsungAirco {
             await this._request('PUT', fullEndpoint, data);
             this.log.info(`명령어를 ${fullEndpoint}(으)로 성공적으로 보냈습니다.`);
             this.deviceState = null;
-            await this.getCachedState('명령 전송 후 상태');
+            await this.getCachedState();
         } catch (error) {
             this.log.error(`${endpoint}(으)로 명령을 보내는 데 실패했습니다: ${error.message}`);
             throw error;
@@ -189,11 +167,11 @@ class SamsungAirco {
         return [this.informationService, this.aircoSamsung];
     }
     
-    // --- Getters & Setters (상태 요청 시 명확한 'caller' 전달) ---
+    // --- Getters & Setters ---
 
     async getActive(callback) {
         try {
-            const state = await this.getCachedState('전원');
+            const state = await this.getCachedState();
             const isActive = state.Operation.power === "On" ? Characteristic.Active.ACTIVE : Characteristic.Active.INACTIVE;
             callback(null, isActive);
         } catch (error) {
@@ -204,8 +182,12 @@ class SamsungAirco {
     async setActive(value, callback) {
         try {
             if (value === Characteristic.Active.INACTIVE) {
+                // 전원 끄기
                 await this.sendCommand('', { Operation: { power: 'Off' } });
             } else {
+                // --- 수정된 부분 ---
+                // 전원 켜기 요청 시, 단순하게 전원만 켜도록 수정했습니다.
+                // 6초 지연 및 추가적인 모드 설정 로직을 제거했습니다.
                 await this.sendCommand('', { Operation: { power: 'On' } });
                 this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).updateValue(Characteristic.CurrentHeaterCoolerState.COOLING);
             }
@@ -218,7 +200,7 @@ class SamsungAirco {
 
     async getCurrentTemperature(callback) {
         try {
-            const state = await this.getCachedState('현재 온도');
+            const state = await this.getCachedState();
             callback(null, state.Temperatures[0].current);
         } catch (error) {
             callback(error);
@@ -227,7 +209,7 @@ class SamsungAirco {
 
     async getTargetTemperature(callback) {
         try {
-            const state = await this.getCachedState('목표 온도');
+            const state = await this.getCachedState();
             callback(null, state.Temperatures[0].desired);
         } catch (error) {
             callback(error);
@@ -245,7 +227,7 @@ class SamsungAirco {
 
     async getSwingMode(callback) {
         try {
-            const state = await this.getCachedState('스윙/무풍 모드');
+            const state = await this.getCachedState();
             if (this.swingModeType === 'wind') {
                 const mode = state.Wind.direction;
                 callback(null, mode === "Up_And_Low" ? Characteristic.SwingMode.SWING_ENABLED : Characteristic.SwingMode.SWING_DISABLED);
@@ -276,7 +258,7 @@ class SamsungAirco {
 
     async getLockPhysicalControls(callback) {
         try {
-            const state = await this.getCachedState('자동 청소');
+            const state = await this.getCachedState();
             const isEnabled = state.Mode.options.includes("Autoclean_On");
             this.log.info(`자동 청소 상태: ${isEnabled ? '켜짐' : '꺼짐'}`);
             callback(null, isEnabled ? Characteristic.LockPhysicalControls.CONTROL_LOCK_ENABLED : Characteristic.LockPhysicalControls.CONTROL_LOCK_DISABLED);
@@ -299,7 +281,7 @@ class SamsungAirco {
 
     async getCurrentHeaterCoolerState(callback) {
         try {
-            const state = await this.getCachedState('현재 운전 모드');
+            const state = await this.getCachedState();
             const currentMode = state.Mode.modes[0];
             const coolModes = ["CoolClean", "Cool", "Dry", "DryClean", "Auto", "Wind"];
 
