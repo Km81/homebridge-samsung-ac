@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.7.6
+// Version 1.7.7
 //
 // 'use strict'; 는 자바스크립트의 엄격 모드를 활성화하여, 잠재적인 오류를 줄여주는 좋은 습관입니다.
 'use strict';
@@ -69,7 +69,7 @@ class SamsungAirco {
             .setCharacteristic(Characteristic.Model, 'Air Conditioner')
             .setCharacteristic(Characteristic.SerialNumber, config.serialNumber || 'AF16K7970WFN');
         
-        this.log.info(`Samsung AC Plugin v1.7.6 초기화 완료: ${this.name}`);
+        this.log.info(`Samsung AC Plugin v1.7.7 초기화 완료: ${this.name}`);
     }
 
     /**
