@@ -1,4 +1,4 @@
-// Version 1.5.2
+// Version 1.5.3
 // 'use strict'; 는 자바스크립트의 엄격 모드를 활성화하여, 잠재적인 오류를 줄여주는 좋은 습관입니다.
 'use strict';
 
@@ -26,7 +26,7 @@ class SamsungAirco {
         this.swingModeType = config.swingModeType || 'comfort';
         this.cacheDuration = config.cacheDuration || 3000;
 
-        this.log.info(`[${this.name}] 플러그인 초기화 중... 버전 1.5.2`);
+        this.log.info(`[${this.name}] 플러그인 초기화 중... 버전 1.5.3`);
 
         if (!this.ip || !this.token || !this.patchCert) {
             this.log.error(`[${this.name}] IP, 토큰, 인증서 경로는 필수 설정 항목입니다.`);
@@ -60,6 +60,7 @@ class SamsungAirco {
     }
 
     _request(method, path, data = null) {
+        this.log.debug(`[${this.name}] [REQUEST] --> ${method} ${path}`);
         return new Promise((resolve, reject) => {
             const options = { hostname: this.ip, port: 8888, path, method, headers: { 'Authorization': `Bearer ${this.token}` }, agent: this.httpsAgent, timeout: 5000 };
             if (data) {
@@ -72,7 +73,11 @@ class SamsungAirco {
                 let body = [];
                 res.on('data', (chunk) => body.push(chunk));
                 res.on('end', () => {
-                    try { resolve(JSON.parse(Buffer.concat(body).toString() || '{}')); } 
+                    try { 
+                        const parsedBody = JSON.parse(Buffer.concat(body).toString() || '{}');
+                        this.log.debug(`[${this.name}] [RESPONSE] <-- ${method} ${path} 성공`);
+                        resolve(parsedBody);
+                    } 
                     catch (e) { reject(e); }
                 });
             });
@@ -84,8 +89,11 @@ class SamsungAirco {
     }
 
     async getAndUpdateStateInBackground(caller = '배경 업데이트') {
-        if (this.isFetching) return;
-        this.log.info(`[${this.name}] [${caller}] 배경에서 실제 기기 상태를 가져옵니다...`);
+        if (this.isFetching) {
+            this.log.debug(`[${this.name}] '${caller}' 요청: 이미 다른 업데이트가 진행 중이라 건너뜁니다.`);
+            return;
+        }
+        this.log.info(`[${this.name}] '${caller}' 요청: 배경에서 실제 기기 상태를 가져옵니다...`);
         this.isFetching = true;
         try {
             const responseData = await this._request('GET', '/devices');
@@ -148,7 +156,6 @@ class SamsungAirco {
     async sendCommand(endpoint, data) {
         const fullEndpoint = `/devices/${this.setDeviceIndex}${endpoint}`;
         try {
-            this.log.info(`[${this.name}] [SET] 명령어 전송: ${endpoint} 데이터: ${JSON.stringify(data)}`);
             await this._request('PUT', fullEndpoint, data);
             this.lastStateUpdate = 0;
             setTimeout(() => this.getAndUpdateStateInBackground(`명령 후 업데이트 (${endpoint})`), 1500);
