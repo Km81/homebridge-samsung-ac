@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.7.8
+// Version 1.7.9
 //
 // 'use strict'; 는 자바스크립트의 엄격 모드를 활성화하여, 잠재적인 오류를 줄여주는 좋은 습관입니다.
 'use strict';
@@ -70,7 +70,7 @@ class SamsungAirco {
             .setCharacteristic(Characteristic.Model, 'Air Conditioner')
             .setCharacteristic(Characteristic.SerialNumber, config.serialNumber || 'AF16K7970WFN');
         
-        this.log.info(`Samsung AC Plugin v1.7.8 초기화 완료: ${this.name}`);
+        this.log.info(`Samsung AC Plugin v1.7.9 초기화 완료: ${this.name}`);
     }
 
     /**
@@ -134,17 +134,39 @@ class SamsungAirco {
 
     getServices() {
         this.aircoSamsung.setPrimaryService(true);
-        this.aircoSamsung.getCharacteristic(Characteristic.Active).on('get', this.getActive.bind(this)).on('set', this.setActive.bind(this));
-        this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).on('get', this.getCurrentHeaterCoolerState.bind(this));
-        this.aircoSamsung.getCharacteristic(Characteristic.TargetHeaterCoolerState).setProps({ validValues: [Characteristic.TargetHeaterCoolerState.COOL] }).on('get', this.getTargetHeaterCoolerState.bind(this)).on('set', this.setTargetHeaterCoolerState.bind(this));
-        this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature).on('get', this.getCurrentTemperature.bind(this));
-        this.aircoSamsung.getCharacteristic(Characteristic.CoolingThresholdTemperature).setProps({ minValue: 18, maxValue: 30, minStep: 1 }).on('get', this.getTargetTemperature.bind(this)).on('set', this.setTargetTemperature.bind(this));
-        this.aircoSamsung.getCharacteristic(Characteristic.SwingMode).on('get', this.getSwingMode.bind(this)).on('set', this.setSwingMode.bind(this));
-        this.aircoSamsung.getCharacteristic(Characteristic.LockPhysicalControls).on('get', this.getLockPhysicalControls.bind(this)).on('set', this.setLockPhysicalControls.bind(this));
+
+        this.aircoSamsung.getCharacteristic(Characteristic.Active)
+            .on('get', this.getActive.bind(this))
+            .on('set', this.setActive.bind(this));
+
+        this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState)
+            .on('get', this.getCurrentHeaterCoolerState.bind(this));
+
+        this.aircoSamsung.getCharacteristic(Characteristic.TargetHeaterCoolerState)
+            .setProps({ validValues: [Characteristic.TargetHeaterCoolerState.COOL] })
+            .on('get', this.getTargetHeaterCoolerState.bind(this))
+            .on('set', this.setTargetHeaterCoolerState.bind(this));
+
+        this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature)
+            .on('get', this.getCurrentTemperature.bind(this));
+
+        this.aircoSamsung.getCharacteristic(Characteristic.CoolingThresholdTemperature)
+            .setProps({ minValue: 18, maxValue: 30, minStep: 1 })
+            .on('get', this.getTargetTemperature.bind(this))
+            .on('set', this.setTargetTemperature.bind(this));
+        
+        this.aircoSamsung.getCharacteristic(Characteristic.SwingMode)
+            .on('get', this.getSwingMode.bind(this))
+            .on('set', this.setSwingMode.bind(this));
+
+        this.aircoSamsung.getCharacteristic(Characteristic.LockPhysicalControls)
+            .on('get', this.getLockPhysicalControls.bind(this))
+            .on('set', this.setLockPhysicalControls.bind(this));
+
         return [this.informationService, this.aircoSamsung];
     }
     
-    // --- Getters & Setters ---
+    // --- Getters & Setters (v1.7.3 기반으로 복원 및 안정화) ---
 
     async getActive(callback) {
         try {
@@ -153,8 +175,8 @@ class SamsungAirco {
             this.log.info(`[GET] Active: ${isActive ? 'ON' : 'OFF'}`);
             callback(null, isActive ? Characteristic.Active.ACTIVE : Characteristic.Active.INACTIVE);
         } catch (error) { 
-            this.log.error(`[GET] Active 실패: ${error.message}. 기본값 OFF 반환.`);
-            callback(null, Characteristic.Active.INACTIVE);
+            this.log.error(`[GET] Active 실패: ${error.message}`);
+            callback(error);
         }
     }
 
@@ -162,19 +184,9 @@ class SamsungAirco {
         const targetState = value === Characteristic.Active.ACTIVE ? 'On' : 'Off';
         this.log.info(`[SET] Active -> ${targetState}`);
         
-        const now = Date.now();
-        if (now - this.lastCommandTime < this.debounceDelay) {
-            this.log.warn(`[SET] Debounce: 중복 Active 명령 무시.`);
-            return callback(null);
-        }
-        this.lastCommandTime = now;
-
         try {
+            // Active 설정은 전원 명령만 보냅니다.
             await this.sendCommand('', { Operation: { power: targetState } });
-            // UI 즉시 업데이트
-            this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).updateValue(
-                value === Characteristic.Active.ACTIVE ? Characteristic.CurrentHeaterCoolerState.COOLING : Characteristic.CurrentHeaterCoolerState.IDLE
-            );
             callback(null);
         } catch (error) {
             this.log.error(`[SET] Active 실패: ${error.message}`);
@@ -195,8 +207,8 @@ class SamsungAirco {
             this.log.info(`[GET] CurrentState: ${isCooling ? 'COOLING' : 'IDLE'} (Mode: ${currentMode})`);
             callback(null, isCooling ? Characteristic.CurrentHeaterCoolerState.COOLING : Characteristic.CurrentHeaterCoolerState.IDLE);
         } catch (error) { 
-            this.log.error(`[GET] CurrentState 실패: ${error.message}. 기본값 IDLE 반환.`);
-            callback(null, Characteristic.CurrentHeaterCoolerState.IDLE);
+            this.log.error(`[GET] CurrentState 실패: ${error.message}`);
+            callback(error);
         }
     }
 
@@ -204,6 +216,8 @@ class SamsungAirco {
 
     async setTargetHeaterCoolerState(value, callback) {
         this.log.info(`[SET] TargetState -> COOL`);
+
+        // Debounce 로직: 동시 명령어 실행 방지
         const now = Date.now();
         if (now - this.lastCommandTime < this.debounceDelay) {
             this.log.warn(`[SET] Debounce: 중복 TargetState 명령 무시.`);
@@ -214,7 +228,6 @@ class SamsungAirco {
         try {
             if (value === Characteristic.TargetHeaterCoolerState.COOL) {
                 await this.sendCommand('/mode', { modes: ["DryClean"] });
-                // UI 즉시 업데이트
                 this.aircoSamsung.getCharacteristic(Characteristic.Active).updateValue(Characteristic.Active.ACTIVE);
             }
             callback(null);
@@ -230,8 +243,8 @@ class SamsungAirco {
             this.log.info(`[GET] CurrentTemp: ${state.Temperatures[0].current}°C`);
             callback(null, state.Temperatures[0].current);
         } catch (error) { 
-            this.log.error(`[GET] CurrentTemp 실패: ${error.message}. 기본값 22°C 반환.`);
-            callback(null, 22);
+            this.log.error(`[GET] CurrentTemp 실패: ${error.message}`);
+            callback(error);
         }
     }
 
@@ -241,8 +254,8 @@ class SamsungAirco {
             this.log.info(`[GET] TargetTemp: ${state.Temperatures[0].desired}°C`);
             callback(null, state.Temperatures[0].desired);
         } catch (error) { 
-            this.log.error(`[GET] TargetTemp 실패: ${error.message}. 기본값 22°C 반환.`);
-            callback(null, 22);
+            this.log.error(`[GET] TargetTemp 실패: ${error.message}`);
+            callback(error);
         }
     }
 
@@ -269,8 +282,8 @@ class SamsungAirco {
             this.log.info(`[GET] SwingMode: ${isEnabled ? 'ENABLED' : 'DISABLED'}`);
             callback(null, isEnabled ? Characteristic.SwingMode.SWING_ENABLED : Characteristic.SwingMode.SWING_DISABLED);
         } catch (error) {
-            this.log.error(`[GET] SwingMode 실패: ${error.message}. 기본값 DISABLED 반환.`);
-            callback(null, Characteristic.SwingMode.SWING_DISABLED);
+            this.log.error(`[GET] SwingMode 실패: ${error.message}`);
+            callback(error);
         }
     }
 
@@ -297,8 +310,8 @@ class SamsungAirco {
             this.log.info(`[GET] AutoClean: ${isEnabled ? 'ENABLED' : 'DISABLED'}`);
             callback(null, isEnabled ? Characteristic.LockPhysicalControls.CONTROL_LOCK_ENABLED : Characteristic.LockPhysicalControls.CONTROL_LOCK_DISABLED);
         } catch (error) {
-            this.log.error(`[GET] AutoClean 실패: ${error.message}. 기본값 DISABLED 반환.`);
-            callback(null, Characteristic.LockPhysicalControls.CONTROL_LOCK_DISABLED);
+            this.log.error(`[GET] AutoClean 실패: ${error.message}`);
+            callback(error);
         }
     }
 
