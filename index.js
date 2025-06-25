@@ -36,7 +36,9 @@ class SamsungAirco {
         this.deviceIndex = config.deviceIndex || 0;
         this.setDeviceIndex = config.setDeviceIndex ?? this.deviceIndex;
         this.swingModeType = config.swingModeType || 'comfort';
-        this.cacheDuration = config.cacheDuration || 3000;
+        // --- '응답 없음' 문제 해결을 위해 캐시 유효시간을 7초로 늘립니다. ---
+        // 이 시간 동안에는 새로운 상태를 요청하지 않고 저장된 값을 즉시 반환하여 UI 응답성을 높입니다.
+        this.cacheDuration = config.cacheDuration || 7000;
 
         if (!this.ip || !this.token || !this.patchCert) {
             this.log.error("IP, 토큰, 인증서 경로(patchCert)는 필수 설정 항목입니다.");
