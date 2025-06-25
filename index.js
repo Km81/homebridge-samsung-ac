@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.7.3
+// Version 1.7.4
 //
 // 'use strict'; 는 자바스크립트의 엄격 모드를 활성화하여, 잠재적인 오류를 줄여주는 좋은 습관입니다.
 'use strict';
@@ -66,7 +66,7 @@ class SamsungAirco {
             .setCharacteristic(Characteristic.Model, 'Air Conditioner')
             .setCharacteristic(Characteristic.SerialNumber, config.serialNumber || 'AF16K7970WFN');
         
-        this.log.info(`Samsung AC Plugin v1.7.3 초기화 완료: ${this.name}`);
+        this.log.info(`Samsung AC Plugin v1.7.4 초기화 완료: ${this.name}`);
     }
 
     /**
@@ -227,19 +227,27 @@ class SamsungAirco {
         }
     }
 
+    /**
+     * [수정됨] 전원 상태를 설정합니다.
+     * ON: TargetHeaterCoolerState 설정을 통해 전원 켜기 및 모드 설정을 동시에 처리합니다.
+     * OFF: 전원 끄기 명령만 전송합니다.
+     */
     async setActive(value, callback) {
         const targetState = value === Characteristic.Active.ACTIVE ? 'On' : 'Off';
         this.log.info(`[SET] Active (전원) 상태를 '${targetState}'(으)로 설정 요청을 받았습니다.`);
         try {
-            if (value === Characteristic.Active.INACTIVE) {
-                await this.sendCommand('', { Operation: { power: 'Off' } });
+            if (value === Characteristic.Active.ACTIVE) {
+                // 전원 켜기 요청이 오면, TargetHeaterCoolerState 설정을 통해 모드 설정과 전원 켜기를 한번에 처리합니다.
+                // 이렇게 하면 명령어 충돌을 피할 수 있습니다.
+                this.log.info(`[SET] Active: 'On' 요청을 TargetHeaterCoolerState 설정으로 위임합니다.`);
+                this.setTargetHeaterCoolerState(Characteristic.TargetHeaterCoolerState.COOL, callback);
             } else {
-                await this.sendCommand('', { Operation: { power: 'On' } });
-                await this.sendCommand('/mode', { modes: ['DryClean'] });
-                this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).updateValue(Characteristic.CurrentHeaterCoolerState.COOLING);
+                // 전원 끄기는 명확하게 전원 끄기 명령만 보냅니다.
+                await this.sendCommand('', { Operation: { power: 'Off' } });
+                this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).updateValue(Characteristic.CurrentHeaterCoolerState.IDLE);
+                this.log.info(`[SET] Active (전원) 상태를 'Off'(으)로 성공적으로 변경했습니다.`);
+                callback(null);
             }
-            this.log.info(`[SET] Active (전원) 상태를 '${targetState}'(으)로 성공적으로 변경했습니다.`);
-            callback(null);
         } catch(error) {
             this.log.error(`[SET] Active (전원) 상태 설정 실패:`, error.message);
             callback(error);
@@ -353,6 +361,12 @@ class SamsungAirco {
         this.log.info('[GET] CurrentHeaterCoolerState (현재 운전 상태) 요청을 받았습니다.');
         try {
             const state = await this.getCachedState();
+            // 전원이 꺼져 있으면 무조건 IDLE 상태입니다.
+            if (state.Operation.power === 'Off') {
+                this.log.info(`[GET] CurrentHeaterCoolerState 반환: IDLE (전원 꺼짐)`);
+                return callback(null, Characteristic.CurrentHeaterCoolerState.IDLE);
+            }
+
             const currentMode = state.Mode.modes[0];
             const coolModes = ["CoolClean", "Cool", "Dry", "DryClean", "Auto", "Wind"];
 
@@ -371,15 +385,23 @@ class SamsungAirco {
 
     getTargetHeaterCoolerState(callback) {
         this.log.info('[GET] TargetHeaterCoolerState (목표 운전 상태) 요청을 받았습니다.');
-        // 목표 상태는 현재 상태를 그대로 따라가도록 설정합니다.
         this.getCurrentHeaterCoolerState(callback);
     }
     
+    /**
+     * [수정됨] 목표 상태를 설정합니다.
+     * 이 함수는 이제 전원 켜기와 모드 설정을 모두 담당하는 핵심적인 역할을 합니다.
+     */
     async setTargetHeaterCoolerState(value, callback) {
         this.log.info(`[SET] TargetHeaterCoolerState (목표 운전 상태)를 'COOL'로 설정 요청을 받았습니다.`);
         try {
             if (value === Characteristic.TargetHeaterCoolerState.COOL) {
+                // 모드 설정 명령은 대부분의 에어컨에서 전원을 자동으로 켭니다.
+                // 이 명령 하나로 전원과 모드를 모두 제어합니다.
                 await this.sendCommand('/mode', { modes: ["DryClean"] });
+
+                // HomeKit UI가 즉시 반응하도록 상태를 업데이트합니다.
+                this.aircoSamsung.getCharacteristic(Characteristic.Active).updateValue(Characteristic.Active.ACTIVE);
                 this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).updateValue(Characteristic.CurrentHeaterCoolerState.COOLING);
                 this.log.info(`[SET] TargetHeaterCoolerState를 'COOL'로 성공적으로 변경했습니다. (실제 전송 모드: DryClean)`);
             }
