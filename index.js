@@ -1,4 +1,4 @@
-// Version 1.6.1
+// Version 1.6.2
 'use strict';
 
 const https = require('https');
@@ -24,7 +24,6 @@ class SamsungAirco {
     this.setDeviceIndex = config.setDeviceIndex ?? this.deviceIndex;
     this.swingModeType = config.swingModeType || 'comfort';
 
-    // 안전한 기본 상태
     this.deviceState = {
       Operation: { power: 'Off' },
       Temperatures: [{ current: 25, desired: 25 }],
@@ -32,19 +31,9 @@ class SamsungAirco {
       Wind:      { direction: 'Fix' }
     };
     this.isFetching = false;
-    this.lastPowerOnTime = 0;  // 전원 ON 시각 기록
+    this.lastPowerOnTime = 0;
 
-    // 마지막으로 HomeKit에 푸시한 값 기록
-    this.lastPushed = {
-      power: null,
-      curTemp: null,
-      tgtTemp: null,
-      mode: null,
-      swing: null,
-      autoClean: null
-    };
-
-    this.log.info(`[${this.name}] 플러그인 초기화 중... 버전 1.6.1`);
+    this.log.info(`[${this.name}] 플러그인 초기화 중... 버전 1.6.2`);
 
     if (!this.ip || !this.token || !this.patchCert) {
       this.log.error(`[${this.name}] IP, 토큰, 인증서 경로는 필수 설정 항목입니다.`);
@@ -65,15 +54,12 @@ class SamsungAirco {
       .setCharacteristic(Characteristic.Manufacturer, 'Samsung')
       .setCharacteristic(Characteristic.Model, 'Air Conditioner');
 
-    // 초기 UI 푸시 (기본값)
     this.log.info(`[${this.name}] --- 홈킷 UI 푸시 시작 ---`);
     this.pushStateToHomeKit();
 
-    // 초기 상태 로드 + 30초 폴링
     this.getAndUpdateStateInBackground('초기화');
     setInterval(() => this.getAndUpdateStateInBackground('정기 갱신'), 30000);
 
-    // 15초마다 심장박동 이벤트 전송 (모든 특성)
     setInterval(() => {
       const s = this.deviceState;
       const C = Characteristic;
@@ -138,8 +124,13 @@ class SamsungAirco {
         let buf = [];
         res.on('data', chunk => buf.push(chunk));
         res.on('end', () => {
+          const text = Buffer.concat(buf).toString().trim();
+          if (!text) {
+            this.log.debug(`[${this.name}] [RESPONSE] <-- ${method} ${path} (빈 응답)`);
+            return resolve({});
+          }
           try {
-            const json = JSON.parse(Buffer.concat(buf));
+            const json = JSON.parse(text);
             this.log.debug(`[${this.name}] [RESPONSE] <-- ${method} ${path} 성공`);
             resolve(json);
           } catch (e) {
@@ -253,9 +244,11 @@ class SamsungAirco {
       .on('get', cb => this.handleGet(cb, '전원', s => s.Operation.power === 'On'))
       .on('set', (v, cb) => {
         this.log.info(`[${this.name}] [SET] 전원 -> ${v ? '켜짐' : '꺼짐'}`);
-        if (v) {
-          this.lastPowerOnTime = Date.now();
-        }
+        // 1) 내부 상태 즉시 갱신
+        this.deviceState.Operation.power = v ? 'On' : 'Off';
+        // 2) UI 즉시 갱신
+        this.aircoSamsung.updateCharacteristic(C.Active, v);
+        if (v) { this.lastPowerOnTime = Date.now(); }
         cb(null);
         this.sendCommand('', { Operation: { power: v ? 'On' : 'Off' } });
       });
@@ -277,7 +270,6 @@ class SamsungAirco {
       .on('set', (v, cb) => {
         this.log.info(`[${this.name}] [SET] 목표 운전 모드 -> ${v}`);
         cb(null);
-        // debounce: 전원 직후라면 모드 변경 건너뜀
         if (Date.now() - this.lastPowerOnTime < 2000) {
           this.log.info(`[${this.name}] [SET] 전원 직후 모드 변경 건너뜁니다.`);
           return;
@@ -305,7 +297,7 @@ class SamsungAirco {
           : options.includes('Comode_Nano');
       }))
       .on('set', (v, cb) => {
-        this.log.info(`[${this.name}] [SET] 스윙/무풍 모드 -> ${v ? '켜짐' : '꺼짐'}`);
+        this.log.info(`[${this.name}] [SET] 스윙/무풍 모드 -> ${v?'켜짐':'꺼짐'}`);
         cb(null);
         const cmd = this.swingModeType==='wind'
           ? {direction:v?'Up_And_Low':'Fix'}
@@ -319,7 +311,7 @@ class SamsungAirco {
         return options.includes('Autoclean_On');
       }))
       .on('set', (v, cb) => {
-        this.log.info(`[${this.name}] [SET] 자동 청소 -> ${v ? '켜짐' : '꺼짐'}`);
+        this.log.info(`[${this.name}] [SET] 자동 청소 -> ${v?'켜짐':'꺼짐'}`);
         cb(null);
         this.sendCommand('/mode',{options:[v?'Autoclean_On':'Comode_Off']});
       });
