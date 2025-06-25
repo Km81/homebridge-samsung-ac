@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.7.7
+// Version 1.7.8
 //
 // 'use strict'; 는 자바스크립트의 엄격 모드를 활성화하여, 잠재적인 오류를 줄여주는 좋은 습관입니다.
 'use strict';
@@ -43,6 +43,7 @@ class SamsungAirco {
 
         // --- 명령어 충돌 방지를 위한 Debounce 변수 ---
         this.lastCommandTime = 0;
+        this.debounceDelay = 1000; // 1초 이내의 중복 명령 무시
 
         if (!this.ip || !this.token || !this.patchCert) {
             this.log.error("IP, 토큰, 인증서 경로(patchCert)는 필수 설정 항목입니다.");
@@ -69,7 +70,7 @@ class SamsungAirco {
             .setCharacteristic(Characteristic.Model, 'Air Conditioner')
             .setCharacteristic(Characteristic.SerialNumber, config.serialNumber || 'AF16K7970WFN');
         
-        this.log.info(`Samsung AC Plugin v1.7.7 초기화 완료: ${this.name}`);
+        this.log.info(`Samsung AC Plugin v1.7.8 초기화 완료: ${this.name}`);
     }
 
     /**
@@ -109,22 +110,13 @@ class SamsungAirco {
             return this.deviceState;
         }
         this.log.info('[CACHE] 기기에서 최신 상태를 가져옵니다...');
-        try {
-            const responseData = await this._request('GET', '/devices');
-            if (!responseData || !responseData.Devices || !responseData.Devices[this.deviceIndex]) {
-                throw new Error('API 응답에서 유효한 기기 정보를 찾을 수 없습니다.');
-            }
-            this.deviceState = responseData.Devices[this.deviceIndex];
-            this.lastStateUpdate = now;
-            return this.deviceState;
-        } catch (error) {
-            this.log.error(`[CACHE] 기기 상태를 가져오는 데 실패했습니다: ${error.message}`);
-            if (this.deviceState) {
-                this.log.warn('[CACHE] 오류로 인해 오래된 캐시 데이터를 반환합니다.');
-                return this.deviceState;
-            }
-            throw new Error('기기 상태를 가져올 수 없습니다.');
+        const responseData = await this._request('GET', '/devices');
+        if (!responseData || !responseData.Devices || !responseData.Devices[this.deviceIndex]) {
+            throw new Error('API 응답에서 유효한 기기 정보를 찾을 수 없습니다.');
         }
+        this.deviceState = responseData.Devices[this.deviceIndex];
+        this.lastStateUpdate = now;
+        return this.deviceState;
     }
 
     /**
@@ -133,15 +125,9 @@ class SamsungAirco {
     async sendCommand(endpoint, data) {
         const fullEndpoint = `/devices/${this.setDeviceIndex}${endpoint}`;
         this.log.info(`[COMMAND] 명령어 전송 -> Endpoint: ${fullEndpoint}, Data: ${JSON.stringify(data)}`);
-        try {
-            await this._request('PUT', fullEndpoint, data);
-            this.log.info(`[COMMAND] 명령어를 성공적으로 보냈습니다.`);
-            this.deviceState = null;
-            await this.getCachedState();
-        } catch (error) {
-            this.log.error(`[COMMAND] 명령어 전송 실패: ${error.message}`);
-            throw error;
-        }
+        await this._request('PUT', fullEndpoint, data);
+        this.log.info(`[COMMAND] 명령어를 성공적으로 보냈습니다.`);
+        this.deviceState = null; // 캐시 무효화
     }
 
     identify(callback) { this.log.info("장치 식별 요청!"); callback(); }
@@ -161,109 +147,136 @@ class SamsungAirco {
     // --- Getters & Setters ---
 
     async getActive(callback) {
-        this.log.info('[GET] Active');
         try {
             const state = await this.getCachedState();
-            if (!state || !state.Operation) throw new Error('상태 응답에 Operation 속성이 없습니다.');
-            const isActive = state.Operation.power === "On" ? Characteristic.Active.ACTIVE : Characteristic.Active.INACTIVE;
-            callback(null, isActive);
-        } catch (error) { this.log.error('[GET] Active 실패:', error.message); callback(error); }
+            const isActive = state.Operation.power === "On";
+            this.log.info(`[GET] Active: ${isActive ? 'ON' : 'OFF'}`);
+            callback(null, isActive ? Characteristic.Active.ACTIVE : Characteristic.Active.INACTIVE);
+        } catch (error) { 
+            this.log.error(`[GET] Active 실패: ${error.message}. 기본값 OFF 반환.`);
+            callback(null, Characteristic.Active.INACTIVE);
+        }
     }
 
     async setActive(value, callback) {
         const targetState = value === Characteristic.Active.ACTIVE ? 'On' : 'Off';
         this.log.info(`[SET] Active -> ${targetState}`);
+        
         const now = Date.now();
-        if (now - this.lastCommandTime < 2000) { this.log.warn(`[SET] Debounce: 이전 명령 후 2초가 지나지 않아 요청을 무시합니다.`); return callback(null); }
+        if (now - this.lastCommandTime < this.debounceDelay) {
+            this.log.warn(`[SET] Debounce: 중복 Active 명령 무시.`);
+            return callback(null);
+        }
         this.lastCommandTime = now;
+
         try {
             await this.sendCommand('', { Operation: { power: targetState } });
-            if (value === Characteristic.Active.INACTIVE) this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).updateValue(Characteristic.CurrentHeaterCoolerState.IDLE);
-            else this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).updateValue(Characteristic.CurrentHeaterCoolerState.COOLING);
+            // UI 즉시 업데이트
+            this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).updateValue(
+                value === Characteristic.Active.ACTIVE ? Characteristic.CurrentHeaterCoolerState.COOLING : Characteristic.CurrentHeaterCoolerState.IDLE
+            );
             callback(null);
-        } catch (error) { this.log.error(`[SET] Active 실패:`, error.message); callback(error); }
+        } catch (error) {
+            this.log.error(`[SET] Active 실패: ${error.message}`);
+            callback(error);
+        }
     }
 
     async getCurrentHeaterCoolerState(callback) {
-        this.log.info('[GET] CurrentHeaterCoolerState');
         try {
             const state = await this.getCachedState();
-            if (!state || !state.Operation || !state.Mode) throw new Error('상태 응답에 Operation 또는 Mode 속성이 없습니다.');
-            if (state.Operation.power === 'Off') return callback(null, Characteristic.CurrentHeaterCoolerState.IDLE);
+            if (state.Operation.power === 'Off') {
+                this.log.info('[GET] CurrentState: IDLE (Power Off)');
+                return callback(null, Characteristic.CurrentHeaterCoolerState.IDLE);
+            }
             const coolModes = ["CoolClean", "Cool", "Dry", "DryClean", "Auto", "Wind"];
             const currentMode = state.Mode.modes[0];
-            callback(null, coolModes.includes(currentMode) ? Characteristic.CurrentHeaterCoolerState.COOLING : Characteristic.CurrentHeaterCoolerState.IDLE);
-        } catch (error) { this.log.error('[GET] CurrentHeaterCoolerState 실패:', error.message); callback(error); }
+            const isCooling = coolModes.includes(currentMode);
+            this.log.info(`[GET] CurrentState: ${isCooling ? 'COOLING' : 'IDLE'} (Mode: ${currentMode})`);
+            callback(null, isCooling ? Characteristic.CurrentHeaterCoolerState.COOLING : Characteristic.CurrentHeaterCoolerState.IDLE);
+        } catch (error) { 
+            this.log.error(`[GET] CurrentState 실패: ${error.message}. 기본값 IDLE 반환.`);
+            callback(null, Characteristic.CurrentHeaterCoolerState.IDLE);
+        }
     }
 
     getTargetHeaterCoolerState(callback) { this.getCurrentHeaterCoolerState(callback); }
 
     async setTargetHeaterCoolerState(value, callback) {
-        this.log.info(`[SET] TargetHeaterCoolerState -> COOL`);
+        this.log.info(`[SET] TargetState -> COOL`);
         const now = Date.now();
-        if (now - this.lastCommandTime < 2000) { this.log.warn(`[SET] Debounce: 이전 명령 후 2초가 지나지 않아 요청을 무시합니다.`); return callback(null); }
+        if (now - this.lastCommandTime < this.debounceDelay) {
+            this.log.warn(`[SET] Debounce: 중복 TargetState 명령 무시.`);
+            return callback(null);
+        }
         this.lastCommandTime = now;
+
         try {
             if (value === Characteristic.TargetHeaterCoolerState.COOL) {
                 await this.sendCommand('/mode', { modes: ["DryClean"] });
+                // UI 즉시 업데이트
                 this.aircoSamsung.getCharacteristic(Characteristic.Active).updateValue(Characteristic.Active.ACTIVE);
-                this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).updateValue(Characteristic.CurrentHeaterCoolerState.COOLING);
             }
             callback(null);
-        } catch (error) { this.log.error(`[SET] TargetHeaterCoolerState 실패:`, error.message); callback(error); }
+        } catch (error) {
+            this.log.error(`[SET] TargetState 실패: ${error.message}`);
+            callback(error);
+        }
     }
 
     async getCurrentTemperature(callback) {
-        this.log.info('[GET] CurrentTemperature');
         try {
             const state = await this.getCachedState();
-            if (!state || !state.Temperatures) throw new Error('상태 응답에 Temperatures 속성이 없습니다.');
+            this.log.info(`[GET] CurrentTemp: ${state.Temperatures[0].current}°C`);
             callback(null, state.Temperatures[0].current);
-        } catch (error) { this.log.error('[GET] CurrentTemperature 실패:', error.message); callback(error); }
+        } catch (error) { 
+            this.log.error(`[GET] CurrentTemp 실패: ${error.message}. 기본값 22°C 반환.`);
+            callback(null, 22);
+        }
     }
 
     async getTargetTemperature(callback) {
-        this.log.info('[GET] TargetTemperature');
         try {
             const state = await this.getCachedState();
-            if (!state || !state.Temperatures) throw new Error('상태 응답에 Temperatures 속성이 없습니다.');
+            this.log.info(`[GET] TargetTemp: ${state.Temperatures[0].desired}°C`);
             callback(null, state.Temperatures[0].desired);
-        } catch (error) { this.log.error('[GET] TargetTemperature 실패:', error.message); callback(error); }
+        } catch (error) { 
+            this.log.error(`[GET] TargetTemp 실패: ${error.message}. 기본값 22°C 반환.`);
+            callback(null, 22);
+        }
     }
 
     async setTargetTemperature(value, callback) {
-        this.log.info(`[SET] TargetTemperature -> ${value}°C`);
-        const now = Date.now();
-        if (now - this.lastCommandTime < 2000) { this.log.warn(`[SET] Debounce: 이전 명령 후 2초가 지나지 않아 요청을 무시합니다.`); return callback(null); }
-        this.lastCommandTime = now;
+        this.log.info(`[SET] TargetTemp -> ${value}°C`);
         try {
             await this.sendCommand('/temperatures/0', { desired: value });
             callback(null);
-        } catch (error) { this.log.error(`[SET] TargetTemperature 실패:`, error.message); callback(error); }
+        } catch (error) {
+            this.log.error(`[SET] TargetTemp 실패: ${error.message}`);
+            callback(error);
+        }
     }
 
     async getSwingMode(callback) {
-        this.log.info('[GET] SwingMode');
         try {
             const state = await this.getCachedState();
+            let isEnabled;
             if (this.swingModeType === 'wind') {
-                if (!state || !state.Wind) throw new Error('상태 응답에 Wind 속성이 없습니다.');
-                const isEnabled = state.Wind.direction === "Up_And_Low";
-                callback(null, isEnabled ? Characteristic.SwingMode.SWING_ENABLED : Characteristic.SwingMode.SWING_DISABLED);
+                isEnabled = state.Wind.direction === "Up_And_Low";
             } else {
-                if (!state || !state.Mode || !state.Mode.options) throw new Error('상태 응답에 Mode.options 속성이 없습니다.');
-                const isEnabled = state.Mode.options.includes("Comode_Nano");
-                callback(null, isEnabled ? Characteristic.SwingMode.SWING_ENABLED : Characteristic.SwingMode.SWING_DISABLED);
+                isEnabled = state.Mode.options.includes("Comode_Nano");
             }
-        } catch (error) { this.log.error('[GET] SwingMode 실패:', error.message); callback(error); }
+            this.log.info(`[GET] SwingMode: ${isEnabled ? 'ENABLED' : 'DISABLED'}`);
+            callback(null, isEnabled ? Characteristic.SwingMode.SWING_ENABLED : Characteristic.SwingMode.SWING_DISABLED);
+        } catch (error) {
+            this.log.error(`[GET] SwingMode 실패: ${error.message}. 기본값 DISABLED 반환.`);
+            callback(null, Characteristic.SwingMode.SWING_DISABLED);
+        }
     }
 
     async setSwingMode(value, callback) {
         const targetState = value === Characteristic.SwingMode.SWING_ENABLED ? 'ENABLED' : 'DISABLED';
         this.log.info(`[SET] SwingMode -> ${targetState}`);
-        const now = Date.now();
-        if (now - this.lastCommandTime < 2000) { this.log.warn(`[SET] Debounce: 이전 명령 후 2초가 지나지 않아 요청을 무시합니다.`); return callback(null); }
-        this.lastCommandTime = now;
         try {
             if (this.swingModeType === 'wind') {
                 await this.sendCommand('/wind', { direction: value === Characteristic.SwingMode.SWING_ENABLED ? "Up_And_Low" : "Fix" });
@@ -271,28 +284,33 @@ class SamsungAirco {
                 await this.sendCommand('/mode', { options: [value === Characteristic.SwingMode.SWING_ENABLED ? "Comode_Nano" : "Comode_Off"] });
             }
             callback(null);
-        } catch (error) { this.log.error(`[SET] SwingMode 실패:`, error.message); callback(error); }
+        } catch (error) {
+            this.log.error(`[SET] SwingMode 실패: ${error.message}`);
+            callback(error);
+        }
     }
 
     async getLockPhysicalControls(callback) {
-        this.log.info('[GET] LockPhysicalControls');
         try {
             const state = await this.getCachedState();
-            if (!state || !state.Mode || !state.Mode.options) throw new Error('상태 응답에 Mode.options 속성이 없습니다.');
             const isEnabled = state.Mode.options.includes("Autoclean_On");
+            this.log.info(`[GET] AutoClean: ${isEnabled ? 'ENABLED' : 'DISABLED'}`);
             callback(null, isEnabled ? Characteristic.LockPhysicalControls.CONTROL_LOCK_ENABLED : Characteristic.LockPhysicalControls.CONTROL_LOCK_DISABLED);
-        } catch (error) { this.log.error('[GET] LockPhysicalControls 실패:', error.message); callback(error); }
+        } catch (error) {
+            this.log.error(`[GET] AutoClean 실패: ${error.message}. 기본값 DISABLED 반환.`);
+            callback(null, Characteristic.LockPhysicalControls.CONTROL_LOCK_DISABLED);
+        }
     }
 
     async setLockPhysicalControls(value, callback) {
         const targetState = value === Characteristic.LockPhysicalControls.CONTROL_LOCK_ENABLED ? 'Autoclean_On' : 'Autoclean_Off';
-        this.log.info(`[SET] LockPhysicalControls -> ${targetState}`);
-        const now = Date.now();
-        if (now - this.lastCommandTime < 2000) { this.log.warn(`[SET] Debounce: 이전 명령 후 2초가 지나지 않아 요청을 무시합니다.`); return callback(null); }
-        this.lastCommandTime = now;
+        this.log.info(`[SET] AutoClean -> ${targetState}`);
         try {
             await this.sendCommand('/mode', { options: [targetState] });
             callback(null);
-        } catch (error) { this.log.error(`[SET] LockPhysicalControls 실패:`, error.message); callback(error); }
+        } catch (error) {
+            this.log.error(`[SET] AutoClean 실패: ${error.message}`);
+            callback(error);
+        }
     }
 }
