@@ -1,11 +1,11 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.7.5
+// Version 1.7.6
 //
 // 'use strict'; 는 자바스크립트의 엄격 모드를 활성화하여, 잠재적인 오류를 줄여주는 좋은 습관입니다.
 'use strict';
 
 // Node.js에 내장된 https 모듈을 불러옵니다. axios 라이브러리를 대체하여 더 낮은 수준의 직접적인 통신을 담당합니다.
-const https = require('https';
+const https = require('https');
 // Node.js에 내장된 fs (File System) 모듈로, 인증서 같은 파일을 읽기 위해 필요합니다.
 const fs = require('fs');
 
@@ -69,7 +69,7 @@ class SamsungAirco {
             .setCharacteristic(Characteristic.Model, 'Air Conditioner')
             .setCharacteristic(Characteristic.SerialNumber, config.serialNumber || 'AF16K7970WFN');
         
-        this.log.info(`Samsung AC Plugin v1.7.5 초기화 완료: ${this.name}`);
+        this.log.info(`Samsung AC Plugin v1.7.6 초기화 완료: ${this.name}`);
     }
 
     /**
