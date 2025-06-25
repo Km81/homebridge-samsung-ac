@@ -1,6 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.8.1
-//
+// Version 1.8.2
 'use strict';
 
 const https = require('https');
@@ -26,7 +25,8 @@ class SamsungAirco {
         this.deviceIndex = config.deviceIndex || 0;
         this.setDeviceIndex = config.setDeviceIndex ?? this.deviceIndex;
         this.swingModeType = config.swingModeType || 'comfort';
-        this.cacheDuration = config.cacheDuration || 3000;
+        // 캐시 기간을 30초로 늘려 순간 off 리포트 방지
+        this.cacheDuration = config.cacheDuration || 30000;
 
         if (!this.ip || !this.token || !this.patchCert) {
             this.log.error("IP, 토큰, 인증서 경로(patchCert)는 필수 설정 항목입니다.");
@@ -50,7 +50,7 @@ class SamsungAirco {
             .setCharacteristic(Characteristic.Model, 'Air Conditioner')
             .setCharacteristic(Characteristic.SerialNumber, config.serialNumber || 'AF16K7970WFN');
 
-        this.log.info(`Samsung AC Plugin v1.8.1 초기화 완료: ${this.name}`);
+        this.log.info(`Samsung AC Plugin v1.8.2 초기화 완료: ${this.name}`);
     }
 
     _request(method, path, data = null) {
@@ -135,7 +135,7 @@ class SamsungAirco {
     }
 
     identify(callback) {
-        this.log.info("장치 식별 요청이 들어왔습니다!");
+        this.log.info('장치 식별 요청이 들어왔습니다!');
         callback();
     }
 
@@ -172,145 +172,65 @@ class SamsungAirco {
         return [this.informationService, this.aircoSamsung];
     }
 
-    // --- Getters & Setters ---
-
     async getActive(callback) {
-        this.log.info('[GET] Active (전원) 상태 요청을 받았습니다.');
+        this.log.info('[GET] Active (전원) 요청을 받았습니다.');
         try {
             const state = await this.getCachedState();
-            const isActive = state.Operation.power === "On" ? Characteristic.Active.ACTIVE : Characteristic.Active.INACTIVE;
-            this.log.info(`[GET] Active 상태 반환: ${isActive === 1 ? 'ACTIVE' : 'INACTIVE'}`);
+            const isActive = state.Operation.power === 'On' ? Characteristic.Active.ACTIVE : Characteristic.Active.INACTIVE;
+            this.log.info(`[GET] Active 반환: ${isActive === Characteristic.Active.ACTIVE ? 'ACTIVE' : 'INACTIVE'}`);
             callback(null, isActive);
         } catch (error) {
-            this.log.error('[GET] Active 상태 가져오기 실패:', error.message);
+            this.log.error('[GET] Active 가져오기 실패:', error.message);
             callback(error);
         }
     }
 
     async setActive(value, callback) {
         const target = value === Characteristic.Active.ACTIVE ? 'On' : 'Off';
-        this.log.info(`[SET] Active (전원) 상태를 '${target}'(으)로 설정 요청을 받았습니다.`);
+        this.log.info(`[SET] Active를 '${target}'로 설정 요청`);
         try {
             await this.sendCommand('', { Operation: { power: target } });
-            this.log.info(`[SET] Active (전원) 상태를 '${target}'(으)로 성공적으로 변경했습니다.`);
+            // 캐시와 UI 강제 업데이트
+            if (this.deviceState) this.deviceState.Operation.power = target;
+            this.aircoSamsung.getCharacteristic(Characteristic.Active).updateValue(value);
+
+            this.log.info(`[SET] Active를 '${target}'로 성공적으로 변경`);
             callback(null);
-        } catch(error) {
-            this.log.error(`[SET] Active (전원) 상태 설정 실패:`, error.message);
+        } catch (error) {
+            this.log.error('[SET] Active 설정 실패:', error.message);
             callback(error);
         }
     }
 
     async getCurrentTemperature(callback) {
-        this.log.info('[GET] CurrentTemperature (현재 온도) 요청을 받았습니다.');
+        this.log.info('[GET] CurrentTemperature 요청');
         try {
             const state = await this.getCachedState();
             callback(null, state.Temperatures[0].current);
         } catch (error) {
-            this.log.error('[GET] CurrentTemperature 가져오기 실패:', error.message);
+            this.log.error('[GET] CurrentTemperature 실패:', error.message);
             callback(error);
         }
     }
 
     async getTargetTemperature(callback) {
-        this.log.info('[GET] TargetTemperature (목표 온도) 요청을 받았습니다.');
+        this.log.info('[GET] TargetTemperature 요청');
         try {
             const state = await this.getCachedState();
             callback(null, state.Temperatures[0].desired);
         } catch (error) {
-            this.log.error('[GET] TargetTemperature 가져오기 실패:', error.message);
+            this.log.error('[GET] TargetTemperature 실패:', error.message);
             callback(error);
         }
     }
 
     async setTargetTemperature(value, callback) {
-        this.log.info(`[SET] TargetTemperature (목표 온도)를 ${value}°C로 설정 요청을 받았습니다.`);
+        this.log.info(`[SET] TargetTemperature를 ${value}°C로`);
         try {
             await this.sendCommand('/temperatures/0', { desired: value });
             callback(null);
         } catch (error) {
-            this.log.error(`[SET] TargetTemperature 설정 실패:`, error.message);
+            this.log.error('[SET] TargetTemperature 실패:', error.message);
             callback(error);
         }
     }
-
-    async getSwingMode(callback) {
-        this.log.info('[GET] SwingMode (바람 방향/무풍) 요청을 받았습니다.');
-        try {
-            const state = await this.getCachedState();
-            let enabled;
-            if (this.swingModeType === 'wind') {
-                enabled = state.Wind.direction === 'Up_And_Low';
-            } else {
-                enabled = state.Mode.options.includes('Comode_Nano');
-            }
-            callback(null, enabled ? Characteristic.SwingMode.SWING_ENABLED : Characteristic.SwingMode.SWING_DISABLED);
-        } catch (error) {
-            this.log.error('[GET] SwingMode 가져오기 실패:', error.message);
-            callback(error);
-        }
-    }
-
-    async setSwingMode(value, callback) {
-        this.log.info('[SET] SwingMode 설정 요청을 받았습니다.');
-        try {
-            if (this.swingModeType === 'wind') {
-                const dir = value === Characteristic.SwingMode.SWING_ENABLED ? 'Up_And_Low' : 'Fix';
-                await this.sendCommand('/wind', { direction: dir });
-            } else {
-                const opt = value === Characteristic.SwingMode.SWING_ENABLED ? 'Comode_Nano' : 'Comode_Off';
-                await this.sendCommand('/mode', { options: [opt] });
-            }
-            callback(null);
-        } catch (error) {
-            this.log.error('[SET] SwingMode 설정 실패:', error.message);
-            callback(error);
-        }
-    }
-
-    async getLockPhysicalControls(callback) {
-        this.log.info('[GET] LockPhysicalControls (자동 청소) 요청을 받았습니다.');
-        try {
-            const state = await this.getCachedState();
-            const enabled = state.Mode.options.includes('Autoclean_On');
-            callback(null, enabled ? Characteristic.LockPhysicalControls.CONTROL_LOCK_ENABLED : Characteristic.LockPhysicalControls.CONTROL_LOCK_DISABLED);
-        } catch (error) {
-            this.log.error('[GET] LockPhysicalControls 가져오기 실패:', error.message);
-            callback(error);
-        }
-    }
-
-    async setLockPhysicalControls(value, callback) {
-        this.log.info('[SET] LockPhysicalControls 설정 요청을 받았습니다.');
-        try {
-            const opt = value === Characteristic.LockPhysicalControls.CONTROL_LOCK_ENABLED ? 'Autoclean_On' : 'Autoclean_Off';
-            await this.sendCommand('/mode', { options: [opt] });
-            callback(null);
-        } catch (error) {
-            this.log.error('[SET] LockPhysicalControls 설정 실패:', error.message);
-            callback(error);
-        }
-    }
-
-    async getCurrentHeaterCoolerState(callback) {
-        this.log.info('[GET] CurrentHeaterCoolerState 요청을 받았습니다.');
-        try {
-            const state = await this.getCachedState();
-            const mode = state.Mode.modes[0];
-            const cooling = ['CoolClean','Cool','Dry','DryClean','Auto','Wind'].includes(mode);
-            callback(null, cooling ? Characteristic.CurrentHeaterCoolerState.COOLING : Characteristic.CurrentHeaterCoolerState.IDLE);
-        } catch (error) {
-            this.log.error('[GET] CurrentHeaterCoolerState 가져오기 실패:', error.message);
-            callback(error);
-        }
-    }
-
-    getTargetHeaterCoolerState(callback) {
-        this.log.info('[GET] TargetHeaterCoolerState 요청을 받았습니다.');
-        this.getCurrentHeaterCoolerState(callback);
-    }
-
-    async setTargetHeaterCoolerState(value, callback) {
-        this.log.info('[SET] TargetHeaterCoolerState 설정 요청을 받았습니다.');
-        callback(null);
-    }
-}
