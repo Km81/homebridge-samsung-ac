@@ -1,4 +1,4 @@
-// Version 1.5.8
+// Version 1.5.9
 'use strict';
 
 const https = require('https');
@@ -43,10 +43,10 @@ class SamsungAirco {
       autoClean: null
     };
 
-    this.log.info(`[${this.name}] init v1.5.8`);
+    this.log.info(`[${this.name}] 플러그인 초기화 중... 버전 1.5.9`);
 
     if (!this.ip || !this.token || !this.patchCert) {
-      this.log.error(`[${this.name}] Missing required config (ip, token, patchCert).`);
+      this.log.error(`[${this.name}] IP, 토큰, 인증서 경로는 필수 설정 항목입니다.`);
       return;
     }
 
@@ -65,14 +65,23 @@ class SamsungAirco {
       .setCharacteristic(Characteristic.Model, 'Air Conditioner');
 
     // 초기 UI 푸시 (기본값)
+    this.log.info(`[${this.name}] --- 홈킷 UI 푸시 시작 ---`);
     this.pushStateToHomeKit();
 
     // 초기 상태 로드 + 30초 폴링
-    this.getAndUpdateStateInBackground('Init');
-    setInterval(() => this.getAndUpdateStateInBackground('Poll'), 30000);
+    this.getAndUpdateStateInBackground('초기화');
+    setInterval(() => this.getAndUpdateStateInBackground('정기 갱신'), 30000);
+
+    // 15초마다 심장박동 이벤트 전송
+    setInterval(() => {
+      const temp = this.deviceState.Temperatures[0]?.current;
+      this.log.info(`[${this.name}] [HEARTBEAT] 현재 온도 이벤트 재전송: ${temp}°C`);
+      this.aircoSamsung.updateCharacteristic(Characteristic.CurrentTemperature, temp);
+    }, 15000);
   }
 
   _request(method, path, data = null) {
+    this.log.debug(`[${this.name}] [REQUEST] --> ${method} ${path}`);
     return new Promise((resolve, reject) => {
       const opts = {
         hostname: this.ip,
@@ -83,56 +92,78 @@ class SamsungAirco {
         agent: this.httpsAgent,
         timeout: 5000
       };
+      let payload;
       if (data) {
-        const body = JSON.stringify(data);
+        payload = JSON.stringify(data);
         opts.headers['Content-Type'] = 'application/json';
-        opts.headers['Content-Length'] = Buffer.byteLength(body);
+        opts.headers['Content-Length'] = Buffer.byteLength(payload);
       }
       const req = https.request(opts, res => {
         if (res.statusCode < 200 || res.statusCode >= 300) {
-          return reject(new Error(`HTTP ${res.statusCode}`));
+          const err = new Error(`상태 코드 ${res.statusCode}`);
+          this.log.error(`[${this.name}] [RESPONSE ERROR] ${method} ${path}: ${err.message}`);
+          return reject(err);
         }
         let buf = [];
         res.on('data', chunk => buf.push(chunk));
         res.on('end', () => {
-          try { resolve(JSON.parse(Buffer.concat(buf))); }
-          catch (e) { reject(e); }
+          try {
+            const json = JSON.parse(Buffer.concat(buf));
+            this.log.debug(`[${this.name}] [RESPONSE] <-- ${method} ${path} 성공`);
+            resolve(json);
+          } catch (e) {
+            this.log.error(`[${this.name}] [PARSE ERROR] ${method} ${path}: ${e.message}`);
+            reject(e);
+          }
         });
       });
-      req.on('error', reject);
-      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-      if (data) req.write(JSON.stringify(data));
+      req.on('error', e => {
+        this.log.error(`[${this.name}] [REQUEST ERROR] ${method} ${path}: ${e.message}`);
+        reject(e);
+      });
+      req.on('timeout', () => {
+        this.log.error(`[${this.name}] [요청 시간 초과] ${method} ${path}`);
+        req.destroy();
+        reject(new Error('요청 시간 초과'));
+      });
+      if (payload) req.write(payload);
       req.end();
     });
   }
 
   async getAndUpdateStateInBackground(caller) {
-    if (this.isFetching) return;
+    if (this.isFetching) {
+      this.log.debug(`[${this.name}] '${caller}' 요청: 이미 업데이트 중이라 건너뜁니다.`);
+      return;
+    }
+    this.log.info(`[${this.name}] '${caller}' 요청: 실제 기기 상태를 가져옵니다...`);
     this.isFetching = true;
     try {
       const res = await this._request('GET', '/devices');
       const device = res.Devices?.[this.deviceIndex];
       if (device) {
         this.deviceState = device;
+        this.log.info(`[${this.name}] '${caller}' 요청: 상태 업데이트 성공. UI에 푸시합니다.`);
         this.pushStateToHomeKit();
+      } else {
+        this.log.warn(`[${this.name}] '${caller}' 요청: 인덱스 ${this.deviceIndex}에 기기가 없습니다.`);
       }
     } catch (err) {
-      this.log.error(`[${this.name}] fetch fail (${caller}): ${err.message}`);
+      this.log.error(`[${this.name}] '${caller}' 요청: 상태 업데이트 실패: ${err.message}`);
     } finally {
       this.isFetching = false;
     }
   }
 
   pushStateToHomeKit() {
+    this.log.info(`[${this.name}] --- 홈킷 UI 푸시 시작 ---`);
     const s = this.deviceState;
     const C = Characteristic;
 
-    // 안전하게 배열 검사
     const modes   = Array.isArray(s.Mode?.modes)   ? s.Mode.modes   : [];
     const options = Array.isArray(s.Mode?.options) ? s.Mode.options : [];
 
-    // 계산된 값
-    const power     = (s.Operation.power === 'On');
+    const power     = s.Operation.power === 'On';
     const curTemp   = s.Temperatures[0]?.current;
     const tgtTemp   = s.Temperatures[0]?.desired;
     const modeVal   = (power && modes.some(m => ['Cool','CoolClean','Dry','DryClean','Auto','Wind'].includes(m)))
@@ -143,25 +174,59 @@ class SamsungAirco {
                     : options.includes('Comode_Nano');
     const autoClean = options.includes('Autoclean_On');
 
-    // 변경된 항목만 HomeKit에 푸시
-    if (this.lastPushed.power     !== power)     { this.aircoSamsung.updateCharacteristic(C.Active,                 power);     this.lastPushed.power     = power; }
-    if (this.lastPushed.curTemp   !== curTemp)   { this.aircoSamsung.updateCharacteristic(C.CurrentTemperature,     curTemp);   this.lastPushed.curTemp   = curTemp; }
-    if (this.lastPushed.tgtTemp   !== tgtTemp)   { this.aircoSamsung.updateCharacteristic(C.CoolingThresholdTemperature, tgtTemp); this.lastPushed.tgtTemp   = tgtTemp; }
-    if (this.lastPushed.mode      !== modeVal)   { this.aircoSamsung.updateCharacteristic(C.CurrentHeaterCoolerState, modeVal); this.lastPushed.mode      = modeVal; }
-    if (this.lastPushed.swing     !== swing)     { this.aircoSamsung.updateCharacteristic(C.SwingMode,              swing);     this.lastPushed.swing     = swing; }
-    if (this.lastPushed.autoClean !== autoClean) { this.aircoSamsung.updateCharacteristic(C.LockPhysicalControls,  autoClean); this.lastPushed.autoClean = autoClean; }
+    if (this.lastPushed.power !== power) {
+      this.log.info(`[${this.name}] [PUSH] 전원: ${power ? '켜짐' : '꺼짐'}`);
+      this.aircoSamsung.updateCharacteristic(C.Active, power);
+      this.lastPushed.power = power;
+    }
+    if (this.lastPushed.curTemp !== curTemp) {
+      this.log.info(`[${this.name}] [PUSH] 현재 온도: ${curTemp}°C`);
+      this.aircoSamsung.updateCharacteristic(C.CurrentTemperature, curTemp);
+      this.lastPushed.curTemp = curTemp;
+    }
+    if (this.lastPushed.tgtTemp !== tgtTemp) {
+      this.log.info(`[${this.name}] [PUSH] 목표 온도: ${tgtTemp}°C`);
+      this.aircoSamsung.updateCharacteristic(C.CoolingThresholdTemperature, tgtTemp);
+      this.lastPushed.tgtTemp = tgtTemp;
+    }
+    if (this.lastPushed.mode !== modeVal) {
+      this.log.info(`[${this.name}] [PUSH] 운전 상태: ${modeVal === C.CurrentHeaterCoolerState.COOLING ? '냉방중' : '대기'}`);
+      this.aircoSamsung.updateCharacteristic(C.CurrentHeaterCoolerState, modeVal);
+      this.lastPushed.mode = modeVal;
+    }
+    if (this.lastPushed.swing !== swing) {
+      this.log.info(`[${this.name}] [PUSH] ${this.swingModeType === 'wind' ? '스윙 모드' : '무풍 모드'}: ${swing ? '켜짐' : '꺼짐'}`);
+      this.aircoSamsung.updateCharacteristic(C.SwingMode, swing);
+      this.lastPushed.swing = swing;
+    }
+    if (this.lastPushed.autoClean !== autoClean) {
+      this.log.info(`[${this.name}] [PUSH] 자동 청소: ${autoClean ? '켜짐' : '꺼짐'}`);
+      this.aircoSamsung.updateCharacteristic(C.LockPhysicalControls, autoClean);
+      this.lastPushed.autoClean = autoClean;
+    }
+
+    this.log.info(`[${this.name}] --- 홈킷 UI 푸시 완료 ---`);
   }
 
   handleGet(callback, caller, extractor) {
-    callback(null, extractor(this.deviceState));
+    const value = extractor(this.deviceState);
+    this.log.info(`[${this.name}] [GET] '${caller}' 요청 받음. 캐시된 값 (${value}) 로 즉시 응답합니다.`);
+    callback(null, value);
   }
 
   async sendCommand(endpoint, data) {
-    await this._request('PUT', `/devices/${this.setDeviceIndex}${endpoint}`, data);
-    setTimeout(() => this.getAndUpdateStateInBackground('CmdUpdate'), 1500);
+    this.log.info(`[${this.name}] [SEND] ${endpoint} -> ${JSON.stringify(data)}`);
+    try {
+      await this._request('PUT', `/devices/${this.setDeviceIndex}${endpoint}`, data);
+      this.log.info(`[${this.name}] [SEND] 명령 전송 성공: ${endpoint}`);
+    } catch (err) {
+      this.log.error(`[${this.name}] [SEND] 명령 전송 실패: ${err.message}`);
+    }
+    setTimeout(() => this.getAndUpdateStateInBackground(`명령 후 업데이트 (${endpoint})`), 1500);
   }
 
   identify(callback) {
+    this.log.info(`[${this.name}] 식별 요청 받음`);
     callback();
   }
 
@@ -170,45 +235,73 @@ class SamsungAirco {
     const C = Characteristic;
 
     this.aircoSamsung.getCharacteristic(C.Active)
-      .on('get', cb => this.handleGet(cb, 'Power', s => s.Operation.power === 'On'))
-      .on('set', (v, cb) => { cb(null); this.sendCommand('', { Operation: { power: v ? 'On' : 'Off' } }); });
+      .on('get', cb => this.handleGet(cb, '전원', s => s.Operation.power === 'On'))
+      .on('set', (v, cb) => {
+        this.log.info(`[${this.name}] [SET] 전원 -> ${v ? '켜짐' : '꺼짐'}`);
+        cb(null);
+        this.sendCommand('', { Operation: { power: v ? 'On' : 'Off' } });
+      });
 
     this.aircoSamsung.getCharacteristic(C.CurrentHeaterCoolerState)
-      .on('get', cb => this.handleGet(cb, 'State', s =>
-        (s.Operation.power === 'On' && Array.isArray(s.Mode?.modes) && s.Mode.modes.some(m => ['Cool','CoolClean','Dry','DryClean','Auto','Wind'].includes(m)))
+      .on('get', cb => this.handleGet(cb, '운전 상태', s => {
+        const modes = Array.isArray(s.Mode?.modes) ? s.Mode.modes : [];
+        return (s.Operation.power === 'On' && modes.some(m => ['Cool','CoolClean','Dry','DryClean','Auto','Wind'].includes(m)))
           ? C.CurrentHeaterCoolerState.COOLING
-          : C.CurrentHeaterCoolerState.IDLE
-      ));
+          : C.CurrentHeaterCoolerState.IDLE;
+      }));
 
     this.aircoSamsung.getCharacteristic(C.TargetHeaterCoolerState)
       .setProps({ validValues: [C.TargetHeaterCoolerState.COOL] })
-      .on('get', cb => cb(null, C.TargetHeaterCoolerState.COOL))
-      .on('set', (v, cb) => { cb(null); if (v === C.TargetHeaterCoolerState.COOL) this.sendCommand('/mode', { modes: ['DryClean'] }); });
+      .on('get', cb => {
+        this.log.info(`[${this.name}] [GET] 목표 운전 모드 -> 냉방`);
+        cb(null, C.TargetHeaterCoolerState.COOL);
+      })
+      .on('set', (v, cb) => {
+        this.log.info(`[${this.name}] [SET] 목표 운전 모드 -> ${v}`);
+        cb(null);
+        if (v === C.TargetHeaterCoolerState.COOL) {
+          this.sendCommand('/mode', { modes: ['DryClean'] });
+        }
+      });
 
     this.aircoSamsung.getCharacteristic(C.CurrentTemperature)
-      .on('get', cb => this.handleGet(cb, 'CurTemp', s => s.Temperatures[0]?.current));
+      .on('get', cb => this.handleGet(cb, '현재 온도', s => s.Temperatures[0]?.current));
 
     this.aircoSamsung.getCharacteristic(C.CoolingThresholdTemperature)
       .setProps({ minValue: 18, maxValue: 30, minStep: 1 })
-      .on('get', cb => this.handleGet(cb, 'TgtTemp', s => s.Temperatures[0]?.desired))
-      .on('set', (v, cb) => { cb(null); this.sendCommand('/temperatures/0', { desired: v }); });
+      .on('get', cb => this.handleGet(cb, '목표 온도', s => s.Temperatures[0]?.desired))
+      .on('set', (v, cb) => {
+        this.log.info(`[${this.name}] [SET] 목표 온도 -> ${v}°C`);
+        cb(null);
+        this.sendCommand('/temperatures/0', { desired: v });
+      });
 
     this.aircoSamsung.getCharacteristic(C.SwingMode)
-      .on('get', cb => this.handleGet(cb, 'Swing', s =>
-        (this.swingModeType === 'wind')
+      .on('get', cb => this.handleGet(cb, '스윙/무풍 모드', s => {
+        const options = Array.isArray(s.Mode?.options) ? s.Mode.options : [];
+        return this.swingModeType === 'wind'
           ? s.Wind.direction === 'Up_And_Low'
-          : Array.isArray(s.Mode?.options) && s.Mode.options.includes('Comode_Nano')
-      ))
-      .on('set', (v, cb) => { cb(null);
-        const cmd = (this.swingModeType === 'wind')
+          : options.includes('Comode_Nano');
+      }))
+      .on('set', (v, cb) => {
+        this.log.info(`[${this.name}] [SET] 스윙/무풍 모드 -> ${v ? '켜짐' : '꺼짐'}`);
+        cb(null);
+        const cmd = this.swingModeType === 'wind'
           ? { direction: v ? 'Up_And_Low' : 'Fix' }
           : { options: [v ? 'Comode_Nano' : 'Comode_Off'] };
         this.sendCommand(this.swingModeType === 'wind' ? '/wind' : '/mode', cmd);
       });
 
     this.aircoSamsung.getCharacteristic(C.LockPhysicalControls)
-      .on('get', cb => this.handleGet(cb, 'AutoClean', s => Array.isArray(s.Mode?.options) && s.Mode.options.includes('Autoclean_On')))
-      .on('set', (v, cb) => { cb(null); this.sendCommand('/mode', { options: [v ? 'Autoclean_On' : 'Autoclean_Off'] }); });
+      .on('get', cb => this.handleGet(cb, '자동 청소', s => {
+        const options = Array.isArray(s.Mode?.options) ? s.Mode.options : [];
+        return options.includes('Autoclean_On');
+      }))
+      .on('set', (v, cb) => {
+        this.log.info(`[${this.name}] [SET] 자동 청소 -> ${v ? '켜짐' : '꺼짐'}`);
+        cb(null);
+        this.sendCommand('/mode', { options: [v ? 'Autoclean_On' : 'Comode_Off'] });
+      });
 
     return [ this.informationService, this.aircoSamsung ];
   }
