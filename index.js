@@ -1,4 +1,4 @@
-// Version 1.7.0
+// Version 1.7.1
 // 'use strict'; 는 자바스크립트의 엄격 모드를 활성화하여, 잠재적인 오류를 줄여주는 좋은 습관입니다.
 'use strict';
 
@@ -26,7 +26,7 @@ class SamsungAirco {
         this.swingModeType = config.swingModeType || 'comfort';
         this.cacheDuration = config.cacheDuration || 3000;
 
-        this.log.info(`[${this.name}] 플러그인 초기화 중... 버전 1.7.0`);
+        this.log.info(`[${this.name}] 플러그인 초기화 중... 버전 1.7.1`);
 
         if (!this.ip || !this.token || !this.patchCert) {
             this.log.error(`[${this.name}] IP, 토큰, 인증서 경로는 필수 설정 항목입니다.`);
@@ -62,13 +62,11 @@ class SamsungAirco {
                 agent: this.httpsAgent,
                 timeout: 5000
             };
-
             if (data) {
                 const postData = JSON.stringify(data);
                 options.headers['Content-Type'] = 'application/json';
                 options.headers['Content-Length'] = Buffer.byteLength(postData);
             }
-
             const req = https.request(options, (res) => {
                 if (res.statusCode < 200 || res.statusCode >= 300) {
                     return reject(new Error(`Request failed with status code ${res.statusCode}`));
@@ -84,13 +82,11 @@ class SamsungAirco {
                     }
                 });
             });
-
             req.on('error', (e) => reject(e));
             req.on('timeout', () => {
                 req.destroy();
                 reject(new Error('Request timed out'));
             });
-
             if (data) {
                 req.write(JSON.stringify(data));
             }
@@ -103,7 +99,6 @@ class SamsungAirco {
         if (this.deviceState && (now - this.lastStateUpdate < this.cacheDuration)) {
             return Promise.resolve(this.deviceState);
         }
-
         this.log.info(`[${this.name}] 기기에서 최신 상태를 가져옵니다...`);
         return this._request('GET', '/devices')
             .then(responseData => {
@@ -142,35 +137,27 @@ class SamsungAirco {
 
     getServices() {
         this.aircoSamsung.setPrimaryService(true);
-
         this.aircoSamsung.getCharacteristic(Characteristic.Active)
             .on('get', this.getActive.bind(this))
             .on('set', this.setActive.bind(this));
-        
         this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState)
             .on('get', this.getCurrentHeaterCoolerState.bind(this));
-        
         this.aircoSamsung.getCharacteristic(Characteristic.TargetHeaterCoolerState)
             .setProps({ validValues: [Characteristic.TargetHeaterCoolerState.COOL] })
             .on('get', this.getTargetHeaterCoolerState.bind(this))
             .on('set', this.setTargetHeaterCoolerState.bind(this));
-        
         this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature)
             .on('get', this.getCurrentTemperature.bind(this));
-        
         this.aircoSamsung.getCharacteristic(Characteristic.CoolingThresholdTemperature)
             .setProps({ minValue: 18, maxValue: 30, minStep: 1 })
             .on('get', this.getTargetTemperature.bind(this))
             .on('set', this.setTargetTemperature.bind(this));
-        
         this.aircoSamsung.getCharacteristic(Characteristic.SwingMode)
             .on('get', this.getSwingMode.bind(this))
             .on('set', this.setSwingMode.bind(this));
-        
         this.aircoSamsung.getCharacteristic(Characteristic.LockPhysicalControls)
             .on('get', this.getLockPhysicalControls.bind(this))
             .on('set', this.setLockPhysicalControls.bind(this));
-
         return [this.informationService, this.aircoSamsung];
     }
     
@@ -179,19 +166,25 @@ class SamsungAirco {
     getActive(callback) {
         this.log.info(`[${this.name}] [GET] '전원' 상태 요청`);
         this.getCachedState().then(state => {
-            const isActive = state.Operation.power === "On";
-            this.log.info(`[${this.name}] [GET] '전원' 상태: ${isActive ? '켜짐' : '꺼짐'}`);
-            callback(null, isActive ? Characteristic.Active.ACTIVE : Characteristic.Active.INACTIVE);
+            const isActive = state.Operation.power === "On" ? Characteristic.Active.ACTIVE : Characteristic.Active.INACTIVE;
+            this.log.info(`[${this.name}] [GET] '전원' 상태 응답: ${isActive === 1 ? '켜짐' : '꺼짐'}`);
+            callback(null, isActive);
         }).catch(error => {
+            this.log.error(`[${this.name}] [GET] '전원' 상태 요청 실패:`, error);
             callback(error);
         });
     }
 
     setActive(value, callback) {
-        const command = value ? 'On' : 'Off';
+        const command = value === Characteristic.Active.ACTIVE ? 'On' : 'Off';
         this.log.info(`[${this.name}] [SET] '전원'을(를) ${command}(으)로 설정합니다.`);
         this.sendCommand('', { Operation: { power: command } })
-            .then(() => callback(null))
+            .then(() => {
+                if (value === Characteristic.Active.ACTIVE) {
+                    this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState).updateValue(Characteristic.CurrentHeaterCoolerState.COOLING);
+                }
+                callback(null);
+            })
             .catch(error => callback(error));
     }
 
@@ -199,9 +192,10 @@ class SamsungAirco {
         this.log.info(`[${this.name}] [GET] '현재 온도' 요청`);
         this.getCachedState().then(state => {
             const temp = state.Temperatures[0].current;
-            this.log.info(`[${this.name}] [GET] '현재 온도': ${temp}°C`);
+            this.log.info(`[${this.name}] [GET] '현재 온도' 응답: ${temp}°C`);
             callback(null, temp);
         }).catch(error => {
+            this.log.error(`[${this.name}] [GET] '현재 온도' 요청 실패:`, error);
             callback(error);
         });
     }
@@ -210,9 +204,10 @@ class SamsungAirco {
         this.log.info(`[${this.name}] [GET] '목표 온도' 요청`);
         this.getCachedState().then(state => {
             const temp = state.Temperatures[0].desired;
-            this.log.info(`[${this.name}] [GET] '목표 온도': ${temp}°C`);
+            this.log.info(`[${this.name}] [GET] '목표 온도' 응답: ${temp}°C`);
             callback(null, temp);
         }).catch(error => {
+            this.log.error(`[${this.name}] [GET] '목표 온도' 요청 실패:`, error);
             callback(error);
         });
     }
@@ -231,9 +226,10 @@ class SamsungAirco {
             const isEnabled = (this.swingModeType === 'wind')
                 ? state.Wind.direction === "Up_And_Low"
                 : state.Mode.options.includes("Comode_Nano");
-            this.log.info(`[${this.name}] [GET] '${modeName}' 상태: ${isEnabled ? '켜짐' : '꺼짐'}`);
+            this.log.info(`[${this.name}] [GET] '${modeName}' 상태 응답: ${isEnabled ? '켜짐' : '꺼짐'}`);
             callback(null, isEnabled ? Characteristic.SwingMode.SWING_ENABLED : Characteristic.SwingMode.SWING_DISABLED);
         }).catch(error => {
+            this.log.error(`[${this.name}] [GET] '${modeName}' 상태 요청 실패:`, error);
             callback(error);
         });
     }
@@ -242,7 +238,6 @@ class SamsungAirco {
         const modeName = this.swingModeType === 'wind' ? '스윙' : '무풍';
         const commandValue = value === Characteristic.SwingMode.SWING_ENABLED;
         this.log.info(`[${this.name}] [SET] '${modeName}'을(를) ${commandValue ? '켜짐' : '꺼짐'}(으)로 설정합니다.`);
-        
         let promise;
         if (this.swingModeType === 'wind') {
             promise = this.sendCommand('/wind', { direction: commandValue ? "Up_And_Low" : "Fix" });
@@ -256,9 +251,10 @@ class SamsungAirco {
         this.log.info(`[${this.name}] [GET] '자동 청소' 상태 요청`);
         this.getCachedState().then(state => {
             const isEnabled = state.Mode.options.includes("Autoclean_On");
-            this.log.info(`[${this.name}] [GET] '자동 청소' 상태: ${isEnabled ? '켜짐' : '꺼짐'}`);
+            this.log.info(`[${this.name}] [GET] '자동 청소' 상태 응답: ${isEnabled ? '켜짐' : '꺼짐'}`);
             callback(null, isEnabled ? Characteristic.LockPhysicalControls.CONTROL_LOCK_ENABLED : Characteristic.LockPhysicalControls.CONTROL_LOCK_DISABLED);
         }).catch(error => {
+            this.log.error(`[${this.name}] [GET] '자동 청소' 상태 요청 실패:`, error);
             callback(error);
         });
     }
@@ -276,9 +272,10 @@ class SamsungAirco {
         this.getCachedState().then(state => {
             const coolModes = ["CoolClean", "Cool", "Dry", "DryClean", "Auto", "Wind"];
             const isCooling = state.Operation.power === 'On' && coolModes.includes(state.Mode.modes[0]);
-            this.log.info(`[${this.name}] [GET] '현재 운전 모드': ${isCooling ? '냉방중' : '대기'}`);
+            this.log.info(`[${this.name}] [GET] '현재 운전 모드' 응답: ${isCooling ? '냉방중' : '대기'}`);
             callback(null, isCooling ? Characteristic.CurrentHeaterCoolerState.COOLING : Characteristic.CurrentHeaterCoolerState.IDLE);
         }).catch(error => {
+            this.log.error(`[${this.name}] [GET] '현재 운전 모드' 요청 실패:`, error);
             callback(error);
         });
     }
