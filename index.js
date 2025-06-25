@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.8.3
+// Version 1.8.4
 'use strict';
 
 const https = require('https');
@@ -49,7 +49,7 @@ class SamsungAirco {
       .setCharacteristic(Characteristic.Model, 'Air Conditioner')
       .setCharacteristic(Characteristic.SerialNumber, config.serialNumber || 'AF16K7970WFN');
 
-    this.log.info(`Samsung AC Plugin v1.8.3 초기화 완료: ${this.name}`);
+    this.log.info(`Samsung AC Plugin v1.8.4 초기화 완료: ${this.name}`);
   }
 
   _request(method, path, data = null) {
