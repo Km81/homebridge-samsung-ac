@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.8.6 (최종 리뷰 기반 개선 버전)
+// Version 1.8.7 (최종 리뷰 기반 개선 버전)
 //
 // 추천: 사용자 경험 향상을 위해 이 플러그인의 config.schema.json 파일을 생성하여
 // ip, token, certPath 등의 필수 항목을 정의하는 것을 권장합니다.
@@ -32,16 +32,17 @@ class SwingModeHandler {
 
 const API_PORT = 8888;
 const API_DEVICES_PATH = '/devices';
-const PLUGIN_VERSION = '1.8.6';
+const PLUGIN_VERSION = '1.8.7';
 
 module.exports = function(homebridge) {
   HAP = homebridge.hap;
   Service = HAP.Service;
   Characteristic = HAP.Characteristic;
 
-  // --- 개선점: HAP 네임스페이스 검증 ---
-  // 플러그인 로딩 시점에 HAP API의 필수 구성요소가 사용 가능한지 확인합니다.
-  if (!HAP || !HAP.HapStatusError) {
+  // --- 개선점: HAP 네임스페이스 검증 (호환성 수정) ---
+  // Homebridge v1.1.7과 같은 구버전과의 호환성을 위해 HAP.HapStatusError의 존재 여부를
+  // 시작 시점에 강하게 검증하지 않습니다. HAP 객체와 핵심 서비스/특성 객체만 확인합니다.
+  if (!HAP || !Service || !Characteristic) {
     throw new Error('Homebridge HAP API가 올바르게 로드되지 않았습니다. Homebridge 버전을 확인해주세요.');
   }
 
@@ -199,8 +200,6 @@ class SamsungAirco {
   getServices() {
     this.aircoSamsung.setPrimaryService(true);
     
-    // --- 개선점: Homebridge v1.1.7 호환성을 위한 핸들러 등록 방식 변경 ---
-    // .onGet(fn), .onSet(fn) 대신 .on('get', fn), .on('set', fn)을 사용합니다.
     this.aircoSamsung.getCharacteristic(Characteristic.Active)
       .on('get', this.getActive.bind(this))
       .on('set', this.setActive.bind(this));
