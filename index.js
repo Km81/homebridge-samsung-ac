@@ -39,13 +39,7 @@ module.exports = function(homebridge) {
   Service = HAP.Service;
   Characteristic = HAP.Characteristic;
 
-  // --- 개선점: HAP 네임스페이스 검증 (호환성 수정) ---
-  // Homebridge v1.1.7과 같은 구버전과의 호환성을 위해 HAP.HapStatusError의 존재 여부를
-  // 시작 시점에 강하게 검증하지 않습니다. HAP 객체와 핵심 서비스/특성 객체만 확인합니다.
-  if (!HAP || !Service || !Characteristic) {
-    throw new Error('Homebridge HAP API가 올바르게 로드되지 않았습니다. Homebridge 버전을 확인해주세요.');
-  }
-
+  // --- 개선점: Homebridge 구버전 호환성을 위해 HAP API 검증 로직 제거 ---
   homebridge.registerAccessory('homebridge-samsung-ac', 'SamsungAC', SamsungAirco);
 };
 
