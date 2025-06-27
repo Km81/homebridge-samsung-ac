@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.8.10
+// Version 1.9.0
 'use strict';
 
 const https = require('https');
@@ -27,7 +27,7 @@ class SwingModeHandler {
 
 const API_PORT = 8888;
 const API_DEVICES_PATH = '/devices';
-const PLUGIN_VERSION = '1.8.10';
+const PLUGIN_VERSION = '1.9.0';
 
 module.exports = function(homebridge) {
   HAP = homebridge.hap;
