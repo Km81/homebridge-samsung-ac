@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.8.6 (최종 리뷰 기반 개선 버전)
+// Version 1.8.9 (최종 리뷰 기반 개선 버전)
 //
 // 추천: 사용자 경험 향상을 위해 이 플러그인의 config.schema.json 파일을 생성하여
 // ip, token, certPath 등의 필수 항목을 정의하는 것을 권장합니다.
@@ -32,7 +32,7 @@ class SwingModeHandler {
 
 const API_PORT = 8888;
 const API_DEVICES_PATH = '/devices';
-const PLUGIN_VERSION = '1.8.6';
+const PLUGIN_VERSION = '1.8.9';
 
 module.exports = function(homebridge) {
   HAP = homebridge.hap;
