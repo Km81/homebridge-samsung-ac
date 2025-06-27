@@ -1,15 +1,10 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.8.9 (최종 리뷰 기반 개선 버전)
-//
-// 추천: 사용자 경험 향상을 위해 이 플러그인의 config.schema.json 파일을 생성하여
-// ip, token, certPath 등의 필수 항목을 정의하는 것을 권장합니다.
+// Version 1.8.10
 'use strict';
 
 const https = require('https');
 const fs = require('fs');
-const AsyncLock = require('async-lock');
 
-// --- 개선점: 전역 변수 명시적 선언 (사용하지 않는 Accessory 제거) ---
 let HAP;
 let Service, Characteristic;
 
@@ -32,22 +27,21 @@ class SwingModeHandler {
 
 const API_PORT = 8888;
 const API_DEVICES_PATH = '/devices';
-const PLUGIN_VERSION = '1.8.9';
+const PLUGIN_VERSION = '1.8.10';
 
 module.exports = function(homebridge) {
   HAP = homebridge.hap;
   Service = HAP.Service;
   Characteristic = HAP.Characteristic;
 
-  // --- 개선점: Homebridge 구버전 호환성을 위해 HAP API 검증 로직 제거 ---
   homebridge.registerAccessory('homebridge-samsung-ac', 'SamsungAC', SamsungAirco);
 };
 
 class SamsungAirco {
   constructor(log, config) {
     this.log = log;
-
     this.name = config.name;
+
     this.ip = config.ip;
     this.token = config.token;
 
@@ -61,7 +55,6 @@ class SamsungAirco {
     this.timeout = config.timeout || 5000;
     this.pollingInterval = config.pollingInterval;
 
-    this.lock = new AsyncLock();
     this.swingModeHandler = new SwingModeHandler(this.swingModeType);
 
     if (!this.ip || !this.token || !this.certPath) {
@@ -75,8 +68,6 @@ class SamsungAirco {
       throw new Error(`[${this.name}] 인증서 또는 키 파일을 찾을 수 없습니다 (오류: ${e.message}). 플러그인 로딩을 중단합니다.`);
     }
 
-    // --- 통신 문제 해결: https.Agent 설정을 이전 버전(v1.8.5)과 동일하게 복원 ---
-    // minVersion 대신 secureProtocol을 사용하여 구형 장치와의 호환성을 확보합니다.
     this.httpsAgent = new https.Agent({
       cert: fs.readFileSync(this.certPath),
       key: fs.readFileSync(this.keyPath),
@@ -104,7 +95,7 @@ class SamsungAirco {
       this.log.info(`[${this.name}] ${this.pollingInterval}초 간격으로 상태 폴링을 시작합니다.`);
       setInterval(() => {
         this.log.debug(`[${this.name}] 주기적인 상태 업데이트 실행...`);
-        this.getCachedState().catch(e => {
+        this.getCachedState(true).catch(e => {
           this.log.error(`[${this.name}] 폴링 실패:`, e.stack || e);
         });
       }, this.pollingInterval * 1000);
@@ -149,43 +140,44 @@ class SamsungAirco {
     }
   }
 
-  async getCachedState() {
-    return this.lock.acquire('state-update', async () => {
-      const now = Date.now();
-      if (this.deviceState && now - this.lastStateUpdate < this.cacheDuration) {
-        this.log.debug(`[${this.name}] 유효한 캐시 사용`);
+  async getCachedState(forceRefresh = false) {
+    const now = Date.now();
+    // 강제 새로고침이 아니고, 캐시가 유효하면 캐시된 상태를 반환
+    if (!forceRefresh && this.deviceState && now - this.lastStateUpdate < this.cacheDuration) {
+      this.log.info(`[${this.name}] 유효한 캐시 사용`);
+      return this.deviceState;
+    }
+    
+    this.log.info(`[${this.name}] 새 상태 요청`);
+    try {
+      const { Devices } = await this._request('GET', API_DEVICES_PATH);
+      if (!Devices || !Array.isArray(Devices) || !Devices[this.deviceIndex]) {
+        this.log.error(`[${this.name}] API 응답에서 유효한 장치를 찾을 수 없습니다 (Index: ${this.deviceIndex}). 응답: ${JSON.stringify(Devices)}`);
+        throw new Error(`Device at index ${this.deviceIndex} not found in API response.`);
+      }
+      this.deviceState = Devices[this.deviceIndex];
+      this.lastStateUpdate = now;
+      this.log.info(`[${this.name}] 캐시 업데이트 완료`);
+      return this.deviceState;
+    } catch (e) {
+      this.log.error(`[${this.name}] 상태 조회 실패:`, e.stack || e);
+      if (this.deviceState) {
+        this.log.warn(`[${this.name}] API 오류 발생. 오래된 캐시 데이터 반환`);
         return this.deviceState;
       }
-      this.log.info(`[${this.name}] 캐시 만료, 새 상태 요청`);
-      try {
-        const { Devices } = await this._request('GET', API_DEVICES_PATH);
-        if (!Devices || !Array.isArray(Devices) || !Devices[this.deviceIndex]) {
-          this.log.error(`[${this.name}] API 응답에서 유효한 장치를 찾을 수 없습니다 (Index: ${this.deviceIndex}). 응답: ${JSON.stringify(Devices)}`);
-          throw new Error(`Device at index ${this.deviceIndex} not found in API response.`);
-        }
-        this.deviceState = Devices[this.deviceIndex];
-        this.lastStateUpdate = now;
-        this.log.info(`[${this.name}] 캐시 업데이트 완료`);
-        return this.deviceState;
-      } catch (e) {
-        this.log.error(`[${this.name}] 상태 조회 실패:`, e.stack || e);
-        if (this.deviceState) {
-          this.log.warn(`[${this.name}] API 오류 발생. 오래된 캐시 데이터 반환`);
-          return this.deviceState;
-        }
-        throw e;
-      }
-    });
+      throw e;
+    }
   }
 
   async sendCommand(endpoint, data) {
-    return this.lock.acquire('state-update', async () => {
-      this.log.info(`[${this.name}] [COMMAND] ${endpoint} -> ${JSON.stringify(data)}`);
-      const fullPath = `/devices/${this.setDeviceIndex}${endpoint}`;
-      await this._request('PUT', fullPath, data);
-      this.log.info(`[${this.name}] [COMMAND] 전송 완료`);
-      this.deviceState = null;
-    });
+    this.log.info(`[${this.name}] [COMMAND] ${endpoint} -> ${JSON.stringify(data)}`);
+    const fullPath = `/devices/${this.setDeviceIndex}${endpoint}`;
+    await this._request('PUT', fullPath, data);
+    this.log.info(`[${this.name}] [COMMAND] 전송 완료`);
+    
+    // v1.8.8과 동일한 방식: 명령 전송 후, 즉시 새로운 상태를 강제로 가져와 동기화합니다.
+    this.deviceState = null;
+    await this.getCachedState(true);
   }
   
   identify(callback) {
@@ -229,117 +221,144 @@ class SamsungAirco {
     return [this.informationService, this.aircoSamsung];
   }
 
-  // --- Characteristic Handlers ---
+  // --- Characteristic Handlers (v1.8.8 callback 스타일 유지) ---
 
-  async getActive() {
+  async getActive(callback) {
+    this.log.info(`[${this.name}] GET Active 요청`);
     try {
       const state = await this.getCachedState();
-      return state.Operation?.power === 'On' ? Characteristic.Active.ACTIVE : Characteristic.Active.INACTIVE;
+      const value = state.Operation?.power === 'On' ? Characteristic.Active.ACTIVE : Characteristic.Active.INACTIVE;
+      this.log.info(`[${this.name}] GET Active 반환: ${value === 1 ? 'ACTIVE' : 'INACTIVE'}`);
+      callback(null, value);
     } catch (e) {
-      this.log.error(`[${this.name}] Active 상태 조회 오류:`, e.stack || e);
-      throw new HAP.HapStatusError(HAP.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+      this.log.error(`[${this.name}] GET Active 오류:`, e.stack || e);
+      callback(e);
     }
   }
 
-  async setActive(value) {
+  async setActive(value, callback) {
     const target = value === Characteristic.Active.ACTIVE ? 'On' : 'Off';
+    this.log.info(`[${this.name}] SET Active 설정 요청: ${target}`);
     try {
       await this.sendCommand('', { Operation: { power: target } });
-      this.log.info(`[${this.name}] Active 설정 완료: ${target}`);
+      this.log.info(`[${this.name}] SET Active 설정 완료`);
+      callback(null);
     } catch (e) {
-      this.log.error(`[${this.name}] Active 설정 오류:`, e.stack || e);
-      throw new HAP.HapStatusError(HAP.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+      this.log.error(`[${this.name}] SET Active 오류:`, e.stack || e);
+      callback(e);
     }
   }
 
-  async getCurrentHeaterCoolerState() {
+  async getCurrentHeaterCoolerState(callback) {
+    this.log.info(`[${this.name}] GET CurrentHeaterCoolerState 요청`);
     try {
       const state = await this.getCachedState();
       const mode = state.Mode?.modes[0];
       const cooling = ['CoolClean', 'Cool', 'Dry', 'DryClean', 'Auto', 'Wind'].includes(mode);
-      return cooling ? Characteristic.CurrentHeaterCoolerState.COOLING : Characteristic.CurrentHeaterCoolerState.IDLE;
+      const value = cooling ? Characteristic.CurrentHeaterCoolerState.COOLING : Characteristic.CurrentHeaterCoolerState.IDLE;
+      this.log.info(`[${this.name}] GET CurrentHeaterCoolerState 반환: ${value === 2 ? 'COOLING' : 'IDLE'}`);
+      callback(null, value);
     } catch (e) {
-      this.log.error(`[${this.name}] CurrentHeaterCoolerState 조회 오류:`, e.stack || e);
-      throw new HAP.HapStatusError(HAP.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+      this.log.error(`[${this.name}] GET CurrentHeaterCoolerState 오류:`, e.stack || e);
+      callback(e);
     }
   }
   
-  getTargetHeaterCoolerState() {
-    return this.getCurrentHeaterCoolerState();
+  getTargetHeaterCoolerState(callback) {
+    this.log.info(`[${this.name}] GET TargetHeaterCoolerState 요청`);
+    this.getCurrentHeaterCoolerState(callback);
   }
   
-  async getCurrentTemperature() {
+  async getCurrentTemperature(callback) {
+    this.log.info(`[${this.name}] GET CurrentTemperature 요청`);
     try {
       const state = await this.getCachedState();
-      return state.Temperatures[0].current;
+      const temp = state.Temperatures[0].current;
+      this.log.info(`[${this.name}] GET CurrentTemperature 반환: ${temp}°C`);
+      callback(null, temp);
     } catch (e) {
-      this.log.error(`[${this.name}] CurrentTemperature 조회 오류:`, e.stack || e);
-      throw new HAP.HapStatusError(HAP.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+      this.log.error(`[${this.name}] GET CurrentTemperature 오류:`, e.stack || e);
+      callback(e);
     }
   }
 
-  async getTargetTemperature() {
+  async getTargetTemperature(callback) {
+    this.log.info(`[${this.name}] GET TargetTemperature 요청`);
     try {
       const state = await this.getCachedState();
-      return state.Temperatures[0].desired;
+      const temp = state.Temperatures[0].desired;
+      this.log.info(`[${this.name}] GET TargetTemperature 반환: ${temp}°C`);
+      callback(null, temp);
     } catch (e) {
-      this.log.error(`[${this.name}] TargetTemperature 조회 오류:`, e.stack || e);
-      throw new HAP.HapStatusError(HAP.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+      this.log.error(`[${this.name}] GET TargetTemperature 오류:`, e.stack || e);
+      callback(e);
     }
   }
 
-  async setTargetTemperature(value) {
+  async setTargetTemperature(value, callback) {
+    this.log.info(`[${this.name}] SET TargetTemperature 설정 요청: ${value}°C`);
     try {
       await this.sendCommand('/temperatures/0', { desired: value });
-      this.log.info(`[${this.name}] TargetTemperature 설정 완료: ${value}°C`);
+      this.log.info(`[${this.name}] SET TargetTemperature 설정 완료`);
+      callback(null);
     } catch (e) {
-      this.log.error(`[${this.name}] TargetTemperature 설정 오류:`, e.stack || e);
-      throw new HAP.HapStatusError(HAP.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+      this.log.error(`[${this.name}] SET TargetTemperature 오류:`, e.stack || e);
+      callback(e);
     }
   }
   
-  async getSwingMode() {
+  async getSwingMode(callback) {
+    this.log.info(`[${this.name}] GET SwingMode 요청`);
     try {
       const state = await this.getCachedState();
       const enabled = this.swingModeHandler.getValue(state);
-      return enabled ? Characteristic.SwingMode.SWING_ENABLED : Characteristic.SwingMode.SWING_DISABLED;
+      const value = enabled ? Characteristic.SwingMode.SWING_ENABLED : Characteristic.SwingMode.SWING_DISABLED;
+      this.log.info(`[${this.name}] GET SwingMode 반환: ${enabled ? 'ENABLED' : 'DISABLED'}`);
+      callback(null, value);
     } catch (e) {
-      this.log.error(`[${this.name}] SwingMode 조회 오류:`, e.stack || e);
-      throw new HAP.HapStatusError(HAP.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+      this.log.error(`[${this.name}] GET SwingMode 오류:`, e.stack || e);
+      callback(e);
     }
   }
 
-  async setSwingMode(value) {
+  async setSwingMode(value, callback) {
     const enable = value === Characteristic.SwingMode.SWING_ENABLED;
+    this.log.info(`[${this.name}] SET SwingMode 설정 요청: ${enable ? 'ENABLED' : 'DISABLED'}`);
     try {
       const { endpoint, data } = this.swingModeHandler.getCommand(enable);
       await this.sendCommand(endpoint, data);
-      this.log.info(`[${this.name}] SwingMode 설정 완료: ${enable ? 'ENABLED' : 'DISABLED'}`);
+      this.log.info(`[${this.name}] SET SwingMode 설정 완료`);
+      callback(null);
     } catch (e) {
-      this.log.error(`[${this.name}] SwingMode 설정 오류:`, e.stack || e);
-      throw new HAP.HapStatusError(HAP.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+      this.log.error(`[${this.name}] SET SwingMode 오류:`, e.stack || e);
+      callback(e);
     }
   }
 
-  async getLockPhysicalControls() {
+  async getLockPhysicalControls(callback) {
+    this.log.info(`[${this.name}] GET LockPhysicalControls 요청`);
     try {
       const state = await this.getCachedState();
       const locked = state.Mode?.options?.includes('Autoclean_On');
-      return locked ? Characteristic.LockPhysicalControls.CONTROL_LOCK_ENABLED : Characteristic.LockPhysicalControls.CONTROL_LOCK_DISABLED;
+      const value = locked ? Characteristic.LockPhysicalControls.CONTROL_LOCK_ENABLED : Characteristic.LockPhysicalControls.CONTROL_LOCK_DISABLED;
+      this.log.info(`[${this.name}] GET LockPhysicalControls 반환: ${locked ? 'ENABLED' : 'DISABLED'}`);
+      callback(null, value);
     } catch (e) {
-      this.log.error(`[${this.name}] LockPhysicalControls 조회 오류:`, e.stack || e);
-      throw new HAP.HapStatusError(HAP.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+      this.log.error(`[${this.name}] GET LockPhysicalControls 오류:`, e.stack || e);
+      callback(e);
     }
   }
 
-  async setLockPhysicalControls(value) {
+  async setLockPhysicalControls(value, callback) {
     const action = value === Characteristic.LockPhysicalControls.CONTROL_LOCK_ENABLED ? 'Autoclean_On' : 'Autoclean_Off';
+    this.log.info(`[${this.name}] SET LockPhysicalControls 설정 요청: ${action}`);
     try {
       await this.sendCommand('/mode', { options: [action] });
-      this.log.info(`[${this.name}] LockPhysicalControls 설정 완료: ${action}`);
+      this.log.info(`[${this.name}] SET LockPhysicalControls 설정 완료`);
+      callback(null);
     } catch (e) {
-      this.log.error(`[${this.name}] LockPhysicalControls 설정 오류:`, e.stack || e);
-      throw new HAP.HapStatusError(HAP.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+      this.log.error(`[${this.name}] SET LockPhysicalControls 오류:`, e.stack || e);
+      callback(e);
     }
   }
 }
