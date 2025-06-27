@@ -1,21 +1,24 @@
 {
   "bridge": {
     "name": "Homebridge",
-    "username": "0E:2E:8C:D4:56:AB",
+    "username": "0E:2A:3B:4C:5D:6E",
     "port": 51826,
-    "pin": "123-45-678"
+    "pin": "031-45-154"
   },
   "accessories": [
     {
       "accessory": "SamsungAC",
-      "name": "거실 에어컨 (무풍)",
-      "ip": "여기에-에어컨-IP주소-입력",
-      "token": "여기에-발급받은-토큰-입력",
-      "patchCert": "여기에-인증서-파일-경로-입력",
-      "deviceIndex": 1,
+      "name": "거실 에어컨",
+      "ip": "192.168.1.100",
+      "token": "YOUR-AC-TOKEN",
+      "certPath": "/path/to/your/cert.pem",
+      "keyPath": "/path/to/your/key.pem",
+      "deviceIndex": 0,
       "setDeviceIndex": 0,
-      "swingModeType": "comfort"
+      "swingModeType": "comfort",
+      "pollingInterval": 60,
+      "timeout": 7000,
+      "cacheDuration": 30000
     }
-  ],
-  "platforms": []
+  ]
 }
