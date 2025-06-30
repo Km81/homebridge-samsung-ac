@@ -1,7 +1,7 @@
 {
   "name": "homebridge-samsung-ac",
-  "version": "1.9.3",
-  "description": "Smart and unified Homebridge plugin for various Samsung air conditioner models",
+  "version": "1.9.4",
+  "description": "A Homebridge plugin for older Samsung air conditioners using TLSv1.",
   "main": "index.js",
   "author": "Km81",
   "license": "MIT",
@@ -18,12 +18,12 @@
     "samsung",
     "air-conditioner",
     "ac",
-    "homekit"
+    "homekit",
+    "tls1"
   ],
   "engines": {
-    "node": ">=14.0.0",
-    "homebridge": ">=1.0.0"
+    "node": ">=16.0.0",
+    "homebridge": ">=1.1.0"
   },
-  "dependencies": {
-  }
+  "dependencies": {}
 }
