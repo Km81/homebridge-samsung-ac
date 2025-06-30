@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.9.12 (Final Architecture with Polling/Cache Optimization)
+// Version 1.9.14 (Final Stability and Error Handling)
 'use strict';
 
 const tls = require('tls');
@@ -8,7 +8,6 @@ const { constants } = require('crypto');
 let HAP;
 let Service, Characteristic;
 
-// 인증서 내장
 const defaultCertificate = `
 -----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDeXvhcsqRFWfQt
@@ -124,7 +123,7 @@ KBHcLDDiEU3llprD8FRV3unYrl0F0B2GGdRk
 
 const API_PORT = 8888;
 const API_DEVICES_PATH = '/devices';
-const PLUGIN_VERSION = '1.9.12';
+const PLUGIN_VERSION = '1.9.14';
 
 class SwingModeHandler {
   constructor(type) { this.type = type; }
@@ -154,7 +153,7 @@ class SamsungAirco {
   constructor(log, config, api) {
     this.log = log;
     this.config = config;
-    this.api = api;
+    this.api = api; 
     this.name = config.name;
     this.ip = config.ip;
     this.token = config.token;
@@ -195,16 +194,12 @@ class SamsungAirco {
       .setCharacteristic(Characteristic.SerialNumber, config.serialNumber || 'B5VNP3EH701769Y')
       .setCharacteristic(Characteristic.FirmwareRevision, PLUGIN_VERSION);
 
-    // 플러그인 시작 시 즉시 상태를 한 번 가져와서 초기 캐시를 채웁니다.
-    // "느린 응답" 경고를 방지하기 위함입니다.
     this.getCachedState(true).catch(e => {
       this.log.error(`[${this.name}] 초기 상태 로딩에 실패했습니다:`, e.message);
     });
     
-    // 백그라운드 폴링을 시작합니다.
     this.startPolling();
 
-    // Homebridge 종료 시 폴링 타이머를 안전하게 정리합니다.
     this.api.on('shutdown', () => {
       this.log.info(`[${this.name}] Homebridge가 종료됩니다. 폴링 타이머를 정리합니다.`);
       if (this.pollingIntervalId) {
@@ -220,22 +215,16 @@ class SamsungAirco {
       this.log.info(`[${this.name}] ${this.pollingInterval}초 간격으로 상태 폴링을 시작합니다.`);
       this.pollingIntervalId = setInterval(() => {
         this.log.debug(`[${this.name}] 주기적인 상태 업데이트 실행...`);
-        // 폴링 실패는 심각한 에러가 아닐 수 있으므로 warn 레벨로 기록합니다.
         this.getCachedState(true).catch(e => this.log.warn(`[${this.name}] 폴링 실패:`, e.message));
       }, this.pollingInterval * 1000);
     }
   }
 
-  /**
-   * 저수준 TLS 소켓을 통해 완벽한 HTTP/1.1 요청을 수동으로 생성합니다.
-   * 비표준 응답을 보내는 구형 장비와의 호환성을 위한 핵심 함수입니다.
-   */
   _rawRequest(path, method, data) {
     return new Promise((resolve, reject) => {
       const socket = tls.connect(this.tlsOptions, () => {
         const body = data ? JSON.stringify(data) : '';
 
-        // HTTP/1.1 표준을 준수하는 헤더 리스트를 배열로 생성
         const lines = [
           `${method} ${path} HTTP/1.1`,
           `Host: ${this.ip}`,
@@ -243,18 +232,16 @@ class SamsungAirco {
           'Connection: close',
         ];
         
-        // body가 있을 경우에만 Content 관련 헤더 추가
         if (body) {
           lines.push('Content-Type: application/json');
           lines.push(`Content-Length: ${Buffer.byteLength(body)}`);
         }
         
-        // 헤더 끝을 알리는 빈 줄(\r\n)을 포함하여 최종 헤더 섹션 생성
         const headerSection = lines.join('\r\n') + '\r\n\r\n';
 
         this.log.debug(`[${this.name}] 요청 전송:\n${headerSection}${body}`);
         socket.write(headerSection + body);
-        socket.end(); // 모든 데이터 전송 후 소켓 쓰기 종료
+        socket.end();
       });
 
       let responseChunks = '';
@@ -297,10 +284,6 @@ class SamsungAirco {
     }
   }
 
-  /**
-   * 장치의 현재 상태를 가져오는 함수. 캐시를 우선적으로 활용합니다.
-   * @param {boolean} force - true일 경우 캐시를 무시하고 항상 네트워크 요청을 보냅니다.
-   */
   async getCachedState(force = false) {
     const now = Date.now();
     if (!force && this.deviceState && (now - this.lastStateUpdate < this.cacheDuration)) {
@@ -312,6 +295,10 @@ class SamsungAirco {
     try {
       const response = await this._request('GET', API_DEVICES_PATH);
       if (!response || !response.Devices || !Array.isArray(response.Devices) || !response.Devices[this.deviceIndex]) {
+        if (this.deviceState) {
+          this.log.warn(`[${this.name}] API 응답이 비정상이지만, 이전 캐시를 사용합니다.`);
+          return this.deviceState;
+        }
         throw new Error(`API 응답에서 장치(index: ${this.deviceIndex})를 찾을 수 없습니다.`);
       }
       this.deviceState = response.Devices[this.deviceIndex];
@@ -319,7 +306,6 @@ class SamsungAirco {
       return this.deviceState;
     } catch (error) {
       this.log.error(`[${this.name}] 상태를 가져오는 데 실패했습니다:`, error.message);
-      // API 요청 실패 시, 기존 캐시라도 있으면 그걸 반환하여 앱 오류 방지
       if (this.deviceState) {
         this.log.warn(`[${this.name}] API 오류가 발생했으나, 마지막으로 성공한 캐시 데이터를 사용합니다.`);
         return this.deviceState;
@@ -332,10 +318,38 @@ class SamsungAirco {
     this.log.info(`[${this.name}] [COMMAND] ${endpoint} -> ${JSON.stringify(data)}`);
     await this._request('PUT', `/devices/${this.setDeviceIndex}${endpoint}`, data);
     this.log.info(`[${this.name}] [COMMAND] 전송 완료`);
-    // 명령 전송 후 즉시 상태를 강제로 갱신하여 최신 상태를 유지
-    await this.getCachedState(true);
-  }
 
+    // Optimistic Update: 로컬 캐시를 즉시 업데이트하여 UI 반응성을 높입니다.
+    this.log.debug(`[${this.name}] 로컬 캐시 즉시 업데이트...`);
+    if (this.deviceState) {
+      if (endpoint === '' && data.Operation?.power === 'Off') {
+        this.deviceState.Operation.power = 'Off';
+      }
+      if (endpoint === '/mode' && data.modes) {
+        this.deviceState.Operation.power = 'On';
+        this.deviceState.Mode.modes = data.modes;
+      }
+      if (endpoint.startsWith('/temperatures/')) {
+        this.deviceState.Temperatures[0].desired = data.desired;
+      }
+      if (endpoint === '/mode' && data.options) {
+          const optionToSet = data.options[0];
+          const isEnabling = optionToSet.endsWith('_On');
+          const baseOpt = isEnabling ? optionToSet.replace('_On', '') : optionToSet.replace('_Off', '');
+          
+          this.deviceState.Mode.options = this.deviceState.Mode.options.filter(o => !o.startsWith(baseOpt));
+          if (isEnabling) {
+              this.deviceState.Mode.options.push(optionToSet);
+          }
+      }
+    }
+
+    // 백그라운드에서 실제 상태를 다시 가져와서 데이터 일관성을 맞춥니다.
+    this.getCachedState(true).catch(e => {
+      this.log.warn(`[${this.name}] 명령 후 상태 동기화 실패 (무시됨):`, e.message);
+    });
+  }
+  
   identify(callback) {
     this.log.info(`[${this.name}] Identify 호출됨.`);
     callback();
@@ -375,14 +389,17 @@ class SamsungAirco {
     return [this.informationService, this.aircoSamsung];
   }
 
-  // --- Characteristic Handlers (성능 최적화 적용) ---
+  // --- ▼▼▼ Characteristic Handlers (최종 안정화 적용) ▼▼▼ ---
   
   async getActive() {
     this.log.debug(`[${this.name}] GET Active`);
-    if (!this.deviceState) throw new HAP.HAPStatus.NOT_RESPONDING();
+    if (!this.deviceState) {
+        // HAPStatusError를 사용하여 HomeKit에 통신 실패를 정확히 알립니다.
+        throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    }
     const isActive = this.deviceState.Operation.power === 'On';
     this.log.info(`[${this.name}] > Active: ${isActive ? 'ON' : 'OFF'}`);
-    return isActive ? 1 : 0;
+    return isActive;
   }
 
   async setActive(value) {
@@ -395,17 +412,18 @@ class SamsungAirco {
         await this.sendCommand('', { "Operation": { "power": "Off" } });
       }
     } catch (e) {
-      this.log.error(`[${this.name}] SET Active 오류:`, e.message);
-      throw e;
+      this.log.error(`[${this.name}] SET Active 실패:`, e.message);
+      // SET 실패 시 HomeKit에 통신 실패 에러를 던져 UI가 멈추지 않게 합니다.
+      throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
   }
 
   async getCurrentHeaterCoolerState() {
     this.log.debug(`[${this.name}] GET CurrentState`);
-    if (!this.deviceState) throw new HAP.HAPStatus.NOT_RESPONDING();
+    if (!this.deviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
 
     if (this.deviceState.Operation.power !== 'On') {
-      this.log.info(`[${this.name}] > CurrentState: INACTIVE (꺼짐)`);
+      this.log.info(`[${this.name}] > CurrentState: INACTIVE`);
       return Characteristic.CurrentHeaterCoolerState.INACTIVE;
     }
     
@@ -423,9 +441,7 @@ class SamsungAirco {
   
   async getTargetHeaterCoolerState() {
     this.log.debug(`[${this.name}] GET TargetState`);
-    const value = Characteristic.TargetHeaterCoolerState.COOL;
-    this.log.info(`[${this.name}] > TargetState: COOL`);
-    return value;
+    return Characteristic.TargetHeaterCoolerState.COOL;
   }
 
   async setTargetHeaterCoolerState(value) {
@@ -434,7 +450,7 @@ class SamsungAirco {
   
   async getCurrentTemperature() {
     this.log.debug(`[${this.name}] GET CurrentTemperature`);
-    if (!this.deviceState) throw new HAP.HAPStatus.NOT_RESPONDING();
+    if (!this.deviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     const temp = this.deviceState.Temperatures[0].current;
     this.log.info(`[${this.name}] > CurrentTemperature: ${temp}°C`);
     return temp;
@@ -442,7 +458,7 @@ class SamsungAirco {
 
   async getTargetTemperature() {
     this.log.debug(`[${this.name}] GET TargetTemperature`);
-    if (!this.deviceState) throw new HAP.HAPStatus.NOT_RESPONDING();
+    if (!this.deviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     const temp = this.deviceState.Temperatures[0].desired;
     this.log.info(`[${this.name}] > TargetTemperature: ${temp}°C`);
     return temp;
@@ -453,37 +469,37 @@ class SamsungAirco {
     try {
       await this.sendCommand('/temperatures/0', { desired: value });
     } catch (e) {
-      this.log.error(`[${this.name}] SET TargetTemp 오류:`, e.message);
-      throw e;
+      this.log.error(`[${this.name}] SET TargetTemp 실패:`, e.message);
+      throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
   }
   
   async getSwingMode() {
     this.log.debug(`[${this.name}] GET SwingMode`);
-    if (!this.deviceState) throw new HAP.HAPStatus.NOT_RESPONDING();
+    if (!this.deviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     const isEnabled = this.swingModeHandler.getValue(this.deviceState);
     this.log.info(`[${this.name}] > SwingMode: ${isEnabled ? 'ENABLED' : 'DISABLED'}`);
-    return isEnabled ? 1 : 0;
+    return isEnabled;
   }
 
   async setSwingMode(value) {
-    const enabled = value === 1;
+    const enabled = !!value;
     this.log.info(`[${this.name}] SET SwingMode -> ${enabled ? 'ENABLED' : 'DISABLED'}`);
     try {
       const { endpoint, data } = this.swingModeHandler.getCommand(enabled);
       await this.sendCommand(endpoint, data);
     } catch (e) {
-      this.log.error(`[${this.name}] SET SwingMode 오류:`, e.message);
-      throw e;
+      this.log.error(`[${this.name}] SET SwingMode 실패:`, e.message);
+      throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
   }
 
   async getLockPhysicalControls() {
     this.log.debug(`[${this.name}] GET LockControls`);
-    if (!this.deviceState) throw new HAP.HAPStatus.NOT_RESPONDING();
+    if (!this.deviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     const isLocked = this.deviceState.Mode.options.includes('Autoclean_On');
     this.log.info(`[${this.name}] > LockControls: ${isLocked ? 'ENABLED' : 'DISABLED'}`);
-    return isLocked ? 1 : 0;
+    return isLocked;
   }
 
   async setLockPhysicalControls(value) {
@@ -492,8 +508,8 @@ class SamsungAirco {
     try {
       await this.sendCommand('/mode', { options: [cmd] });
     } catch (e) {
-      this.log.error(`[${this.name}] SET LockControls 오류:`, e.message);
-      throw e;
+      this.log.error(`[${this.name}] SET LockControls 실패:`, e.message);
+      throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
   }
 }
