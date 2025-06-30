@@ -1,67 +1,109 @@
 {
-  "pluginAlias": "SmartThingsAC-KM81",
-  "pluginType": "platform",
-  "singular": true,
+  "pluginAlias": "SamsungAC",
+  "pluginType": "accessory",
   "schema": {
     "type": "object",
     "properties": {
       "name": {
-        "title": "플랫폼 이름",
+        "title": "액세서리 이름",
         "type": "string",
-        "default": "SmartThings AC",
-        "required": true
+        "required": true,
+        "description": "홈 앱에 표시될 에어컨의 이름을 입력하세요."
       },
-      "clientId": {
-        "title": "Client ID",
+      "ip": {
+        "title": "에어컨 IP 주소",
         "type": "string",
-        "description": "SmartThings Developer Workspace에서 발급받은 Client ID를 입력하세요.",
-        "required": true
+        "format": "ipv4",
+        "required": true,
+        "description": "에어컨의 고정 IP 주소를 입력하세요."
       },
-      "clientSecret": {
-        "title": "Client Secret",
+      "token": {
+        "title": "인증 토큰",
         "type": "string",
-        "description": "SmartThings Developer Workspace에서 발급받은 Client Secret을 입력하세요.",
-        "required": true
+        "required": true,
+        "description": "에어컨 인증 토큰을 입력하세요."
       },
-      "redirectUri": {
-        "title": "Redirect URI",
+      "certPath": {
+        "title": "인증서 파일 경로",
         "type": "string",
-        "description": "앱 생성 시 입력했던 Redirect URI와 동일한 값을 입력하세요. (예: http://<Homebridge IP>:8999/oauth/callback)",
-        "default": "http://localhost:8999/oauth/callback",
-        "required": true
+        "required": true,
+        "description": "인증서(.pem) 파일의 전체 경로를 입력하세요. Docker 환경에서는 /homebridge/your_cert.pem 과 같은 영속적인 경로를 권장합니다."
       },
-      "devices": {
-        "title": "연동할 에어컨 장치",
-        "type": "array",
-        "items": {
-          "type": "object",
-          "properties": {
-            "deviceLabel": {
-              "title": "에어컨 이름 (SmartThings 레이블)",
-              "type": "string",
-              "description": "SmartThings 앱에 등록된 에어컨의 이름과 정확히 일치해야 합니다.",
-              "required": true
-            }
-          }
-        }
+      "keyPath": {
+        "title": "개인 키 파일 경로 (선택 사항)",
+        "type": "string",
+        "description": "인증서와 키 파일이 분리된 경우에만 입력합니다. 대부분의 경우 비워두시면 됩니다."
+      },
+      "deviceIndex": {
+        "title": "장치 인덱스 (읽기)",
+        "type": "integer",
+        "default": 0,
+        "description": "API 응답에서 상태를 읽어올 장치의 인덱스입니다 (0부터 시작)."
+      },
+      "setDeviceIndex": {
+        "title": "장치 인덱스 (쓰기, 선택 사항)",
+        "type": "integer",
+        "description": "명령을 보낼 장치의 인덱스입니다. 비워두면 '읽기' 인덱스와 동일하게 설정됩니다."
+      },
+      "swingModeType": {
+        "title": "스윙 모드 타입",
+        "type": "string",
+        "default": "comfort",
+        "oneOf": [
+          { "title": "컴포트 (Comode_Nano)", "enum": ["comfort"] },
+          { "title": "상하 회전 (Wind)", "enum": ["wind"] }
+        ],
+        "description": "스윙(회전) 기능을 어떤 명령어로 제어할지 선택합니다."
+      },
+      "pollingInterval": {
+        "title": "상태 폴링 간격 (초)",
+        "type": "integer",
+        "description": "리모컨 등 외부에서 상태 변경 시 동기화할 시간 간격입니다. 0 또는 비워두면 비활성화됩니다."
+      },
+      "timeout": {
+        "title": "요청 시간 초과 (ms)",
+        "type": "integer",
+        "default": 5000,
+        "description": "에어컨의 응답을 기다리는 최대 시간입니다 (1000 = 1초)."
+      },
+      "cacheDuration": {
+        "title": "캐시 유지 시간 (ms)",
+        "type": "integer",
+        "default": 30000,
+        "description": "가져온 상태 정보를 재사용할 시간입니다 (1000 = 1초)."
       }
     }
   },
   "layout": [
-    "name",
     {
       "type": "help",
-      "help": "<b>인증 설정:</b><br>1. Client ID, Client Secret, Redirect URI를 입력하고 Homebridge를 재시작하세요.<br>2. 로그에 출력되는 '인증 URL'을 웹 브라우저에서 열고 로그인 및 권한을 허용하면 자동으로 인증이 완료됩니다."
+      "help": "이 플러그인은 TLSv1을 사용하는 구형 삼성 에어컨을 위한 것입니다. 최신 Node.js 환경과의 호환성 패치가 적용되었습니다."
     },
-    "clientId",
-    "clientSecret",
-    "redirectUri",
+    "name",
     {
-      "key": "devices",
-      "type": "array",
-      "title": "에어컨 목록",
+      "key": "ip",
+      "title": "IP 주소",
+      "description": "에어컨의 고정 IP 주소를 입력해주세요."
+    },
+    {
+      "key": "token",
+      "type": "password"
+    },
+    {
+      "key": "certPath",
+      "description": "<b>중요:</b> Docker 환경에서는 <code>/homebridge/ac14k_m.pem</code>과 같이 컨테이너 내부의 영속적인 경로를 사용하세요."
+    },
+    "keyPath",
+    {
+      "type": "fieldset",
+      "title": "고급 설정",
       "items": [
-        "devices[].deviceLabel"
+        "deviceIndex",
+        "setDeviceIndex",
+        "swingModeType",
+        "pollingInterval",
+        "timeout",
+        "cacheDuration"
       ]
     }
   ]
