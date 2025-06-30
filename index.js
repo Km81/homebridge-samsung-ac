@@ -101,48 +101,62 @@ class SamsungAirco {
     }
   }
 
-  _rawRequest(path, method, data) {
-    return new Promise((resolve, reject) => {
-      const jsonData = data ? JSON.stringify(data) : '';
-      const requestData = [
-        `${method} ${path} HTTP/1.1`,
-        `Host: ${this.ip}`,
-        `Authorization: Bearer ${this.token}`,
-        'Content-Type: application/json',
-        `Content-Length: ${Buffer.byteLength(jsonData)}`,
-        'Connection: close',
-        '',
-        jsonData
-      ].join('\r\n');
+_rawRequest(path, method, data) {
+  return new Promise((resolve, reject) => {
+    const jsonData = data ? JSON.stringify(data) : '';
+    const requestData = [
+      `${method} ${path} HTTP/1.1`,
+      `Host: ${this.ip}`,
+      `Authorization: Bearer ${this.token}`,
+      'Content-Type: application/json',
+      `Content-Length: ${Buffer.byteLength(jsonData)}`,
+      'Connection: close',
+      '',
+      jsonData
+    ].join('\r\n');
 
-      const socket = tls.connect(this.tlsOptions, () => {
-        socket.write(requestData);
-      });
-
-      let responseChunks = '';
-      socket.setEncoding('utf8');
-      socket.on('data', chunk => { responseChunks += chunk; });
-      socket.on('end', () => {
-        const jsonStartIndex = responseChunks.indexOf('{');
-        if (jsonStartIndex < 0) {
-          return reject(new Error(`응답에서 유효한 JSON을 찾지 못했습니다. 응답 내용: ${responseChunks}`));
-        }
-        try {
-          const jsonResponse = JSON.parse(responseChunks.slice(jsonStartIndex));
-          resolve(jsonResponse);
-        } catch (e) {
-          reject(new Error(`JSON 파싱에 실패했습니다: ${e.message}`));
-        }
-      });
-      socket.on('timeout', () => {
-        socket.destroy();
-        reject(new Error('요청 시간 초과'));
-      });
-      socket.on('error', (err) => {
-        reject(new Error(`TLS 소켓 오류: ${err.message}`));
-      });
+    const socket = tls.connect(this.tlsOptions, () => {
+      socket.write(requestData);
     });
-  }
+
+    let responseChunks = '';
+    socket.setEncoding('utf8');
+
+    socket.on('data', chunk => { responseChunks += chunk; });
+
+    socket.on('end', () => {
+      // 응답 코드 추출
+      const statusLine = responseChunks.split('\r\n')[0];
+      const statusMatch = statusLine.match(/^HTTP\/\d\.\d\s+(\d+)/);
+      const statusCode = statusMatch ? parseInt(statusMatch[1]) : null;
+
+      if (statusCode === 204) {
+        // 응답 바디 없음 (성공 처리)
+        return resolve({});
+      }
+
+      const jsonStartIndex = responseChunks.indexOf('{');
+      if (jsonStartIndex < 0) {
+        return reject(new Error(`응답에서 유효한 JSON을 찾지 못했습니다. 응답 내용: ${responseChunks}`));
+      }
+      try {
+        const jsonResponse = JSON.parse(responseChunks.slice(jsonStartIndex));
+        resolve(jsonResponse);
+      } catch (e) {
+        reject(new Error(`JSON 파싱에 실패했습니다: ${e.message}`));
+      }
+    });
+
+    socket.on('timeout', () => {
+      socket.destroy();
+      reject(new Error('요청 시간 초과'));
+    });
+
+    socket.on('error', (err) => {
+      reject(new Error(`TLS 소켓 오류: ${err.message}`));
+    });
+  });
+}
 
   async _request(method, path, data = null, retries = 3) {
     for (let attempt = 1; attempt <= retries; attempt++) {
