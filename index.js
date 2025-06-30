@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.9.14 (Definitive Edition with All Fixes and Optimizations)
+// Version 1.9.15 (Definitive Edition with All Fixes and Optimizations)
 'use strict';
 
 const tls = require('tls');
@@ -161,6 +161,7 @@ class SamsungAirco {
     
     this.deviceIndex = config.deviceIndex || 0;
     this.setDeviceIndex = config.setDeviceIndex ?? this.deviceIndex;
+    
     this.swingModeType = config.swingModeType || 'comfort';
     this.cacheDuration = config.cacheDuration || 30000;
     this.timeout = config.timeout || 5000;
@@ -224,15 +225,7 @@ class SamsungAirco {
 
   _rawRequest(path, method, data) {
     return new Promise((resolve, reject) => {
-      const socket = tls.connect(this.tlsOptions)
-        .on('timeout', () => {
-          socket.destroy(new Error('요청 시간 초과'));
-        })
-        .on('error', (err) => reject(new Error(`TLS 소켓 오류: ${err.message}`)));
-
-      socket.setTimeout(this.timeout);
-
-      socket.on('secureConnect', () => {
+      const socket = tls.connect(this.tlsOptions, () => {
         const body = data ? JSON.stringify(data) : '';
 
         const lines = [
@@ -260,23 +253,30 @@ class SamsungAirco {
       socket.on('end', () => {
         this.log.debug(`[${this.name}] 응답 수신:\n${responseChunks}`);
         
-        const bodyStartIndex = responseChunks.indexOf('\r\n\r\n');
-        if (bodyStartIndex === -1) {
+        const separator = '\r\n\r\n';
+        const headerEndIndex = responseChunks.indexOf(separator);
+        
+        if (headerEndIndex === -1) {
           return reject(new Error('HTTP 응답에서 헤더와 본문의 구분을 찾을 수 없습니다.'));
         }
         
-        const body = responseChunks.slice(bodyStartIndex).trim();
+        const body = responseChunks.slice(headerEndIndex + separator.length).trim();
+
         if (!body || body.indexOf('{') < 0) {
           return reject(new Error(`응답에서 유효한 JSON 본문을 발견하지 못했습니다.`));
         }
         try {
-          const jsonResponse = JSON.parse(body.slice(body.indexOf('{')));
+          const jsonResponse = JSON.parse(body);
           resolve(jsonResponse);
         } catch (e) {
           this.log.error(`[${this.name}] 응답 JSON 파싱 실패. 원본 데이터:`, body);
           reject(new Error(`응답 데이터 JSON 파싱에 실패했습니다.`));
         }
       });
+      socket.on('timeout', () => {
+        socket.destroy(new Error('요청 시간 초과'));
+      });
+      socket.on('error', (err) => reject(new Error(`TLS 소켓 오류: ${err.message}`)));
     });
   }
 
@@ -305,17 +305,23 @@ class SamsungAirco {
     this.log.debug(`[${this.name}] 새 상태 요청 (캐시 만료 또는 강제 새로고침)`);
     try {
       const response = await this._request('GET', API_DEVICES_PATH);
-      if (!response || !response.Devices || !Array.isArray(response.Devices) || !response.Devices[this.deviceIndex]) {
-        throw new Error(`API 응답에서 장치(index: ${this.deviceIndex})를 찾을 수 없습니다.`);
+      if (!response || !response.Devices || !Array.isArray(response.Devices)) {
+        throw new Error('API 응답이 비정상적이거나 Devices 배열이 없습니다.');
       }
-      this.deviceState = response.Devices[this.deviceIndex];
+      this.deviceState = response;
       this.lastStateUpdate = now;
-      return this.deviceState;
+
+      // 요청한 인덱스의 장치가 실제로 존재하는지 다시 한번 확인
+      if (!this.deviceState.Devices[this.deviceIndex]) {
+        throw new Error(`API 응답에서 요청한 장치(index: ${this.deviceIndex})를 찾을 수 없습니다.`);
+      }
+      
+      return this.deviceState.Devices[this.deviceIndex];
     } catch (error) {
       this.log.error(`[${this.name}] 상태를 가져오는 데 실패했습니다:`, error.message);
-      if (this.deviceState) {
+      if (this.deviceState && this.deviceState.Devices[this.deviceIndex]) {
         this.log.warn(`[${this.name}] API 오류가 발생했으나, 마지막으로 성공한 캐시 데이터를 사용합니다.`);
-        return this.deviceState;
+        return this.deviceState.Devices[this.deviceIndex];
       }
       throw error;
     }
@@ -328,25 +334,26 @@ class SamsungAirco {
 
     // Optimistic Update: 로컬 캐시를 즉시 업데이트하여 UI 반응성을 높입니다.
     this.log.debug(`[${this.name}] 로컬 캐시 즉시 업데이트...`);
-    if (this.deviceState) {
+    if (this.deviceState && this.deviceState.Devices[this.deviceIndex]) {
+      const targetDeviceState = this.deviceState.Devices[this.deviceIndex];
       if (endpoint === '' && data.Operation?.power) {
-        this.deviceState.Operation.power = data.Operation.power;
+        targetDeviceState.Operation.power = data.Operation.power;
       }
       if (endpoint === '/mode' && data.modes) {
-        this.deviceState.Operation.power = 'On';
-        this.deviceState.Mode.modes = data.modes;
+        targetDeviceState.Operation.power = 'On';
+        targetDeviceState.Mode.modes = data.modes;
       }
       if (endpoint.startsWith('/temperatures/')) {
-        this.deviceState.Temperatures[0].desired = data.desired;
+        targetDeviceState.Temperatures[0].desired = data.desired;
       }
       if (endpoint === '/mode' && data.options) {
           const optionToSet = data.options[0];
           const isEnabling = optionToSet.endsWith('_On');
           const baseOpt = isEnabling ? optionToSet.replace('_On', '') : optionToSet.replace('_Off', '');
           
-          this.deviceState.Mode.options = this.deviceState.Mode.options.filter(o => !o.startsWith(baseOpt));
+          targetDeviceState.Mode.options = targetDeviceState.Mode.options.filter(o => !o.startsWith(baseOpt));
           if (isEnabling) {
-              this.deviceState.Mode.options.push(optionToSet);
+              targetDeviceState.Mode.options.push(optionToSet);
           }
       }
     }
@@ -396,14 +403,14 @@ class SamsungAirco {
     return [this.informationService, this.aircoSamsung];
   }
 
-  // --- Characteristic Handlers (최종 안정화 적용) ---
+  // --- ▼▼▼ Characteristic Handlers (최종 안정화 적용) ▼▼▼ ---
   
   async getActive() {
     this.log.debug(`[${this.name}] GET Active`);
-    if (!this.deviceState) {
-        throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-    }
-    const isActive = this.deviceState.Operation.power === 'On';
+    const currentDeviceState = this.deviceState?.Devices?.[this.deviceIndex];
+    if (!currentDeviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    
+    const isActive = currentDeviceState.Operation.power === 'On';
     this.log.info(`[${this.name}] > Active: ${isActive ? 'ON' : 'OFF'}`);
     return isActive;
   }
@@ -428,14 +435,15 @@ class SamsungAirco {
 
   async getCurrentHeaterCoolerState() {
     this.log.debug(`[${this.name}] GET CurrentState`);
-    if (!this.deviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    const currentDeviceState = this.deviceState?.Devices?.[this.deviceIndex];
+    if (!currentDeviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
 
-    if (this.deviceState.Operation.power !== 'On') {
+    if (currentDeviceState.Operation.power !== 'On') {
       this.log.info(`[${this.name}] > CurrentState: INACTIVE`);
       return Characteristic.CurrentHeaterCoolerState.INACTIVE;
     }
     
-    const mode = this.deviceState.Mode.modes[0];
+    const mode = currentDeviceState.Mode.modes[0];
     const isCooling = ['CoolClean', 'Cool', 'Dry', 'DryClean', 'Auto', 'Wind'].includes(mode);
     
     if (isCooling) {
@@ -458,16 +466,18 @@ class SamsungAirco {
   
   async getCurrentTemperature() {
     this.log.debug(`[${this.name}] GET CurrentTemperature`);
-    if (!this.deviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-    const temp = this.deviceState.Temperatures[0].current;
+    const currentDeviceState = this.deviceState?.Devices?.[this.deviceIndex];
+    if (!currentDeviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    const temp = currentDeviceState.Temperatures[0].current;
     this.log.info(`[${this.name}] > CurrentTemperature: ${temp}°C`);
     return temp;
   }
 
   async getTargetTemperature() {
     this.log.debug(`[${this.name}] GET TargetTemperature`);
-    if (!this.deviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-    const temp = this.deviceState.Temperatures[0].desired;
+    const currentDeviceState = this.deviceState?.Devices?.[this.deviceIndex];
+    if (!currentDeviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    const temp = currentDeviceState.Temperatures[0].desired;
     this.log.info(`[${this.name}] > TargetTemperature: ${temp}°C`);
     return temp;
   }
@@ -484,8 +494,9 @@ class SamsungAirco {
   
   async getSwingMode() {
     this.log.debug(`[${this.name}] GET SwingMode`);
-    if (!this.deviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-    const isEnabled = this.swingModeHandler.getValue(this.deviceState);
+    const currentDeviceState = this.deviceState?.Devices?.[this.deviceIndex];
+    if (!currentDeviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    const isEnabled = this.swingModeHandler.getValue(currentDeviceState);
     this.log.info(`[${this.name}] > SwingMode: ${isEnabled ? 'ENABLED' : 'DISABLED'}`);
     return isEnabled;
   }
@@ -504,8 +515,9 @@ class SamsungAirco {
 
   async getLockPhysicalControls() {
     this.log.debug(`[${this.name}] GET LockControls`);
-    if (!this.deviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-    const isLocked = this.deviceState.Mode.options.includes('Autoclean_On');
+    const currentDeviceState = this.deviceState?.Devices?.[this.deviceIndex];
+    if (!currentDeviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    const isLocked = currentDeviceState.Mode.options.includes('Autoclean_On');
     this.log.info(`[${this.name}] > LockControls: ${isLocked ? 'ENABLED' : 'DISABLED'}`);
     return isLocked;
   }
