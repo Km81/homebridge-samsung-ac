@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.9.10 (Final Stable Version using Raw TLS Socket)
+// Version 1.9.11 (Final Stable Version with Full HTTP/1.1 Request)
 'use strict';
 
 const tls = require('tls');
@@ -123,7 +123,7 @@ KBHcLDDiEU3llprD8FRV3unYrl0F0B2GGdRk
 
 const API_PORT = 8888;
 const API_DEVICES_PATH = '/devices';
-const PLUGIN_VERSION = '1.9.10'; // 최종 버전
+const PLUGIN_VERSION = '1.9.11'; 
 
 class SwingModeHandler {
   constructor(type) { this.type = type; }
@@ -203,7 +203,7 @@ class SamsungAirco {
       }
     });
 
-    this.log.info(`[${this.name}] Samsung AC Plugin v${PLUGIN_VERSION} 초기화 완료 (인증서 내장)`);
+    this.log.info(`[${this.name}] Samsung AC Plugin v${PLUGIN_VERSION} 초기화 완료`);
   }
 
   startPolling() {
@@ -215,21 +215,33 @@ class SamsungAirco {
       }, this.pollingInterval * 1000);
     }
   }
-
+  
+  // --- ▼▼▼ ChatGPT 제안을 반영한 최종 _rawRequest 함수 ▼▼▼ ---
   _rawRequest(path, method, data) {
     return new Promise((resolve, reject) => {
       const socket = tls.connect(this.tlsOptions, () => {
-        const requestData = [
-          `${method} ${path} HTTP/1.0`,
+        const body = data ? JSON.stringify(data) : '';
+
+        // HTTP/1.1 표준을 준수하는 헤더를 생성합니다.
+        const headers = [
+          `${method} ${path} HTTP/1.1`,
+          `Host: ${this.ip}`, // Host 헤더 추가 (필수)
           `Authorization: Bearer ${this.token}`,
           'Connection: close',
-          '\r\n'
-        ].join('\r\n');
-        
-        socket.write(requestData);
-        if (data) {
-          socket.write(JSON.stringify(data));
+          // 데이터가 있을 경우에만 Content 관련 헤더 추가
+          data ? 'Content-Type: application/json' : '',
+          data ? `Content-Length: ${Buffer.byteLength(body)}` : '',
+          '', '' // 헤더의 끝을 알리는 빈 줄
+        ].filter(Boolean).join('\r\n'); // 빈 문자열은 제외하고 줄바꿈으로 합칩니다.
+
+        this.log.debug(`[${this.name}] 요청 전송:\n${headers}${body}`);
+
+        socket.write(headers);
+        if (body) {
+          socket.write(body);
         }
+        // 모든 데이터 전송 후 소켓의 쓰기 부분을 종료하여 '전송 완료'를 명시적으로 알립니다.
+        socket.end();
       });
 
       let responseChunks = '';
@@ -238,9 +250,9 @@ class SamsungAirco {
         responseChunks += chunk;
       });
       socket.on('end', () => {
+        this.log.debug(`[${this.name}] 응답 수신:\n${responseChunks}`);
         const jsonStartIndex = responseChunks.indexOf('{');
         if (jsonStartIndex < 0) {
-          this.log.debug(`[${this.name}] 수신된 비정상 응답:`, responseChunks);
           return reject(new Error(`에어컨으로부터 유효한 JSON 응답을 받지 못했습니다.`));
         }
         try {
@@ -261,6 +273,7 @@ class SamsungAirco {
     });
   }
 
+  // _request, getCachedState, sendCommand 등 나머지 로직은 이전과 동일
   async _request(method, path, data = null, retries = 3) {
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
@@ -294,7 +307,7 @@ class SamsungAirco {
   }
 
   async sendCommand(endpoint, data) {
-    this.log.debug(`[${this.name}] [COMMAND] ${endpoint} -> ${JSON.stringify(data)}`);
+    this.log.info(`[${this.name}] [COMMAND] ${endpoint} -> ${JSON.stringify(data)}`);
     await this._request('PUT', `/devices/${this.setDeviceIndex}${endpoint}`, data);
     this.log.info(`[${this.name}] [COMMAND] 전송 완료: ${endpoint}`);
     this.deviceState = null;
@@ -305,7 +318,7 @@ class SamsungAirco {
     this.log.info(`[${this.name}] Identify 호출됨.`);
     callback();
   }
-
+  
   getServices() {
     this.aircoSamsung.setPrimaryService(true);
 
