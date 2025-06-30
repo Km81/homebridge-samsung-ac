@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.9.13 (Final Stability Hotfix with Command Delay)
+// Version 1.9.14 (Definitive Edition with All Fixes and Optimizations)
 'use strict';
 
 const tls = require('tls');
@@ -8,6 +8,7 @@ const { constants } = require('crypto');
 let HAP;
 let Service, Characteristic;
 
+// 인증서 내장
 const defaultCertificate = `
 -----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDeXvhcsqRFWfQt
@@ -123,7 +124,7 @@ KBHcLDDiEU3llprD8FRV3unYrl0F0B2GGdRk
 
 const API_PORT = 8888;
 const API_DEVICES_PATH = '/devices';
-const PLUGIN_VERSION = '1.9.13';
+const PLUGIN_VERSION = '1.9.15';
 
 class SwingModeHandler {
   constructor(type) { this.type = type; }
@@ -194,20 +195,21 @@ class SamsungAirco {
       .setCharacteristic(Characteristic.SerialNumber, config.serialNumber || 'B5VNP3EH701769Y')
       .setCharacteristic(Characteristic.FirmwareRevision, PLUGIN_VERSION);
 
+    this.log.info(`[${this.name}] Samsung AC Plugin v${PLUGIN_VERSION} 초기화 시작...`);
+    
     this.getCachedState(true).catch(e => {
       this.log.error(`[${this.name}] 초기 상태 로딩에 실패했습니다:`, e.message);
+    }).finally(() => {
+        this.startPolling();
+        this.log.info(`[${this.name}] 초기화 완료.`);
     });
     
-    this.startPolling();
-
     this.api.on('shutdown', () => {
       this.log.info(`[${this.name}] Homebridge가 종료됩니다. 폴링 타이머를 정리합니다.`);
       if (this.pollingIntervalId) {
         clearInterval(this.pollingIntervalId);
       }
     });
-
-    this.log.info(`[${this.name}] Samsung AC Plugin v${PLUGIN_VERSION} 초기화 완료`);
   }
 
   startPolling() {
@@ -222,7 +224,15 @@ class SamsungAirco {
 
   _rawRequest(path, method, data) {
     return new Promise((resolve, reject) => {
-      const socket = tls.connect(this.tlsOptions, () => {
+      const socket = tls.connect(this.tlsOptions)
+        .on('timeout', () => {
+          socket.destroy(new Error('요청 시간 초과'));
+        })
+        .on('error', (err) => reject(new Error(`TLS 소켓 오류: ${err.message}`)));
+
+      socket.setTimeout(this.timeout);
+
+      socket.on('secureConnect', () => {
         const body = data ? JSON.stringify(data) : '';
 
         const lines = [
@@ -249,23 +259,24 @@ class SamsungAirco {
       socket.on('data', chunk => responseChunks += chunk);
       socket.on('end', () => {
         this.log.debug(`[${this.name}] 응답 수신:\n${responseChunks}`);
-        const jsonStartIndex = responseChunks.indexOf('{');
-        if (jsonStartIndex < 0) {
-          return reject(new Error(`에어컨으로부터 유효한 JSON 응답을 받지 못했습니다.`));
+        
+        const bodyStartIndex = responseChunks.indexOf('\r\n\r\n');
+        if (bodyStartIndex === -1) {
+          return reject(new Error('HTTP 응답에서 헤더와 본문의 구분을 찾을 수 없습니다.'));
+        }
+        
+        const body = responseChunks.slice(bodyStartIndex).trim();
+        if (!body || body.indexOf('{') < 0) {
+          return reject(new Error(`응답에서 유효한 JSON 본문을 발견하지 못했습니다.`));
         }
         try {
-          const jsonResponse = JSON.parse(responseChunks.slice(jsonStartIndex));
+          const jsonResponse = JSON.parse(body.slice(body.indexOf('{')));
           resolve(jsonResponse);
         } catch (e) {
-          this.log.error(`[${this.name}] 응답 JSON 파싱 실패. 원본 데이터:`, responseChunks);
+          this.log.error(`[${this.name}] 응답 JSON 파싱 실패. 원본 데이터:`, body);
           reject(new Error(`응답 데이터 JSON 파싱에 실패했습니다.`));
         }
       });
-      socket.on('timeout', () => {
-        socket.destroy();
-        reject(new Error('요청 시간 초과'));
-      });
-      socket.on('error', (err) => reject(new Error(`TLS 소켓 오류: ${err.message}`)));
     });
   }
 
@@ -295,10 +306,6 @@ class SamsungAirco {
     try {
       const response = await this._request('GET', API_DEVICES_PATH);
       if (!response || !response.Devices || !Array.isArray(response.Devices) || !response.Devices[this.deviceIndex]) {
-        if (this.deviceState) {
-          this.log.warn(`[${this.name}] API 응답이 비정상이지만, 이전 캐시를 사용합니다.`);
-          return this.deviceState;
-        }
         throw new Error(`API 응답에서 장치(index: ${this.deviceIndex})를 찾을 수 없습니다.`);
       }
       this.deviceState = response.Devices[this.deviceIndex];
@@ -319,11 +326,32 @@ class SamsungAirco {
     await this._request('PUT', `/devices/${this.setDeviceIndex}${endpoint}`, data);
     this.log.info(`[${this.name}] [COMMAND] 전송 완료`);
 
-    // 명령 전송 후, 에어컨이 상태를 반영할 시간을 주기 위해 2초 대기합니다.
-    this.log.debug(`[${this.name}] 상태 반영을 위해 2초 대기...`);
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    // Optimistic Update: 로컬 캐시를 즉시 업데이트하여 UI 반응성을 높입니다.
+    this.log.debug(`[${this.name}] 로컬 캐시 즉시 업데이트...`);
+    if (this.deviceState) {
+      if (endpoint === '' && data.Operation?.power) {
+        this.deviceState.Operation.power = data.Operation.power;
+      }
+      if (endpoint === '/mode' && data.modes) {
+        this.deviceState.Operation.power = 'On';
+        this.deviceState.Mode.modes = data.modes;
+      }
+      if (endpoint.startsWith('/temperatures/')) {
+        this.deviceState.Temperatures[0].desired = data.desired;
+      }
+      if (endpoint === '/mode' && data.options) {
+          const optionToSet = data.options[0];
+          const isEnabling = optionToSet.endsWith('_On');
+          const baseOpt = isEnabling ? optionToSet.replace('_On', '') : optionToSet.replace('_Off', '');
+          
+          this.deviceState.Mode.options = this.deviceState.Mode.options.filter(o => !o.startsWith(baseOpt));
+          if (isEnabling) {
+              this.deviceState.Mode.options.push(optionToSet);
+          }
+      }
+    }
 
-    // 상태를 강제로 갱신하여 최신 상태를 유지합니다.
+    // 백그라운드에서 실제 상태를 다시 가져와서 데이터 일관성을 맞춥니다.
     this.getCachedState(true).catch(e => {
       this.log.warn(`[${this.name}] 명령 후 상태 동기화 실패 (무시됨):`, e.message);
     });
@@ -368,7 +396,7 @@ class SamsungAirco {
     return [this.informationService, this.aircoSamsung];
   }
 
-  // --- ▼▼▼ Characteristic Handlers (최종 안정화 적용) ▼▼▼ ---
+  // --- Characteristic Handlers (최종 안정화 적용) ---
   
   async getActive() {
     this.log.debug(`[${this.name}] GET Active`);
@@ -381,12 +409,15 @@ class SamsungAirco {
   }
 
   async setActive(value) {
-    const targetState = value ? '제습(Dry) 모드로 켜기' : '끄기';
-    this.log.info(`[${this.name}] SET Active -> ${targetState}`);
     try {
       if (value) {
+        this.log.info(`[${this.name}] SET Active -> ON (전원 켜고 1초 후 제습 모드로 변경)`);
+        await this.sendCommand('', { "Operation": { "power": "On" } });
+        this.log.debug(`[${this.name}] > 모드 변경을 위해 1초 대기...`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
         await this.sendCommand('/mode', { "modes": ["Dry"] });
       } else {
+        this.log.info(`[${this.name}] SET Active -> OFF`);
         await this.sendCommand('', { "Operation": { "power": "Off" } });
       }
     } catch (e) {
