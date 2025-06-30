@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.9.14 (Final Stability and Error Handling)
+// Version 1.9.13 (Final Stability Hotfix with Command Delay)
 'use strict';
 
 const tls = require('tls');
@@ -123,7 +123,7 @@ KBHcLDDiEU3llprD8FRV3unYrl0F0B2GGdRk
 
 const API_PORT = 8888;
 const API_DEVICES_PATH = '/devices';
-const PLUGIN_VERSION = '1.9.14';
+const PLUGIN_VERSION = '1.9.13';
 
 class SwingModeHandler {
   constructor(type) { this.type = type; }
@@ -319,32 +319,11 @@ class SamsungAirco {
     await this._request('PUT', `/devices/${this.setDeviceIndex}${endpoint}`, data);
     this.log.info(`[${this.name}] [COMMAND] 전송 완료`);
 
-    // Optimistic Update: 로컬 캐시를 즉시 업데이트하여 UI 반응성을 높입니다.
-    this.log.debug(`[${this.name}] 로컬 캐시 즉시 업데이트...`);
-    if (this.deviceState) {
-      if (endpoint === '' && data.Operation?.power === 'Off') {
-        this.deviceState.Operation.power = 'Off';
-      }
-      if (endpoint === '/mode' && data.modes) {
-        this.deviceState.Operation.power = 'On';
-        this.deviceState.Mode.modes = data.modes;
-      }
-      if (endpoint.startsWith('/temperatures/')) {
-        this.deviceState.Temperatures[0].desired = data.desired;
-      }
-      if (endpoint === '/mode' && data.options) {
-          const optionToSet = data.options[0];
-          const isEnabling = optionToSet.endsWith('_On');
-          const baseOpt = isEnabling ? optionToSet.replace('_On', '') : optionToSet.replace('_Off', '');
-          
-          this.deviceState.Mode.options = this.deviceState.Mode.options.filter(o => !o.startsWith(baseOpt));
-          if (isEnabling) {
-              this.deviceState.Mode.options.push(optionToSet);
-          }
-      }
-    }
+    // 명령 전송 후, 에어컨이 상태를 반영할 시간을 주기 위해 2초 대기합니다.
+    this.log.debug(`[${this.name}] 상태 반영을 위해 2초 대기...`);
+    await new Promise(resolve => setTimeout(resolve, 2000));
 
-    // 백그라운드에서 실제 상태를 다시 가져와서 데이터 일관성을 맞춥니다.
+    // 상태를 강제로 갱신하여 최신 상태를 유지합니다.
     this.getCachedState(true).catch(e => {
       this.log.warn(`[${this.name}] 명령 후 상태 동기화 실패 (무시됨):`, e.message);
     });
@@ -394,7 +373,6 @@ class SamsungAirco {
   async getActive() {
     this.log.debug(`[${this.name}] GET Active`);
     if (!this.deviceState) {
-        // HAPStatusError를 사용하여 HomeKit에 통신 실패를 정확히 알립니다.
         throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
     const isActive = this.deviceState.Operation.power === 'On';
@@ -413,7 +391,6 @@ class SamsungAirco {
       }
     } catch (e) {
       this.log.error(`[${this.name}] SET Active 실패:`, e.message);
-      // SET 실패 시 HomeKit에 통신 실패 에러를 던져 UI가 멈추지 않게 합니다.
       throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
   }
