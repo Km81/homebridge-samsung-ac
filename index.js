@@ -1,9 +1,10 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.9.5 (Header Fix + HTTP/1.1 Support)
+// Version 1.9.26 (Fixed cert path: cert/cert.pem, HTTP/1.1 + Header Fix)
 'use strict';
 
 const tls = require('tls');
 const fs = require('fs');
+const path = require('path');
 const { constants } = require('crypto');
 
 let HAP;
@@ -11,10 +12,12 @@ let Service, Characteristic;
 
 const API_PORT = 8888;
 const API_DEVICES_PATH = '/devices';
-const PLUGIN_VERSION = '1.9.5';
+const PLUGIN_VERSION = '1.9.26';
 
 class SwingModeHandler {
-  constructor(type) { this.type = type; }
+  constructor(type) {
+    this.type = type;
+  }
   getValue(state) {
     if (!state) return false;
     if (this.type === 'wind') return state.Wind?.direction === 'Up_And_Low';
@@ -30,7 +33,7 @@ class SwingModeHandler {
   }
 }
 
-module.exports = function(homebridge) {
+module.exports = function (homebridge) {
   HAP = homebridge.hap;
   Service = HAP.Service;
   Characteristic = HAP.Characteristic;
@@ -43,8 +46,11 @@ class SamsungAirco {
     this.name = config.name;
     this.ip = config.ip;
     this.token = config.token;
-    this.certPath = config.certPath || config.patchCert;
-    this.keyPath = config.keyPath || this.certPath;
+
+    const defaultCertPath = path.join(__dirname, 'cert', 'cert.pem');
+    this.certPath = defaultCertPath;
+    this.keyPath = defaultCertPath;
+
     this.deviceIndex = config.deviceIndex || 0;
     this.setDeviceIndex = config.setDeviceIndex ?? this.deviceIndex;
     this.swingModeType = config.swingModeType || 'comfort';
@@ -52,10 +58,6 @@ class SamsungAirco {
     this.timeout = config.timeout || 5000;
     this.pollingInterval = config.pollingInterval;
     this.swingModeHandler = new SwingModeHandler(this.swingModeType);
-
-    if (!this.ip || !this.token || !this.certPath) {
-      throw new Error(`[${this.name}] 필수 설정(ip, token, certPath)이 누락되었습니다.`);
-    }
 
     try {
       fs.accessSync(this.certPath, fs.constants.R_OK);
@@ -88,7 +90,7 @@ class SamsungAirco {
       .setCharacteristic(Characteristic.FirmwareRevision, PLUGIN_VERSION);
 
     this.startPolling();
-    this.log.info(`[${this.name}] Samsung AC Plugin v${PLUGIN_VERSION} 초기화 완료 (HTTP/1.1 + Header Fix)`);
+    this.log.info(`[${this.name}] Samsung AC Plugin v${PLUGIN_VERSION} 초기화 완료 (HTTP/1.1 + Header Fix + cert/cert.pem 고정)`);
   }
 
   startPolling() {
@@ -101,62 +103,60 @@ class SamsungAirco {
     }
   }
 
-_rawRequest(path, method, data) {
-  return new Promise((resolve, reject) => {
-    const jsonData = data ? JSON.stringify(data) : '';
-    const requestData = [
-      `${method} ${path} HTTP/1.1`,
-      `Host: ${this.ip}`,
-      `Authorization: Bearer ${this.token}`,
-      'Content-Type: application/json',
-      `Content-Length: ${Buffer.byteLength(jsonData)}`,
-      'Connection: close',
-      '',
-      jsonData
-    ].join('\r\n');
+  _rawRequest(path, method, data) {
+    return new Promise((resolve, reject) => {
+      const jsonData = data ? JSON.stringify(data) : '';
+      const requestData = [
+        `${method} ${path} HTTP/1.1`,
+        `Host: ${this.ip}`,
+        `Authorization: Bearer ${this.token}`,
+        'Content-Type: application/json',
+        `Content-Length: ${Buffer.byteLength(jsonData)}`,
+        'Connection: close',
+        '',
+        jsonData
+      ].join('\r\n');
 
-    const socket = tls.connect(this.tlsOptions, () => {
-      socket.write(requestData);
+      const socket = tls.connect(this.tlsOptions, () => {
+        socket.write(requestData);
+      });
+
+      let responseChunks = '';
+      socket.setEncoding('utf8');
+
+      socket.on('data', chunk => { responseChunks += chunk; });
+
+      socket.on('end', () => {
+        const statusLine = responseChunks.split('\r\n')[0];
+        const statusMatch = statusLine.match(/^HTTP\/\d\.\d\s+(\d+)/);
+        const statusCode = statusMatch ? parseInt(statusMatch[1]) : null;
+
+        if (statusCode === 204) {
+          return resolve({});
+        }
+
+        const jsonStartIndex = responseChunks.indexOf('{');
+        if (jsonStartIndex < 0) {
+          return reject(new Error(`응답에서 유효한 JSON을 찾지 못했습니다. 응답 내용: ${responseChunks}`));
+        }
+        try {
+          const jsonResponse = JSON.parse(responseChunks.slice(jsonStartIndex));
+          resolve(jsonResponse);
+        } catch (e) {
+          reject(new Error(`JSON 파싱에 실패했습니다: ${e.message}`));
+        }
+      });
+
+      socket.on('timeout', () => {
+        socket.destroy();
+        reject(new Error('요청 시간 초과'));
+      });
+
+      socket.on('error', (err) => {
+        reject(new Error(`TLS 소켓 오류: ${err.message}`));
+      });
     });
-
-    let responseChunks = '';
-    socket.setEncoding('utf8');
-
-    socket.on('data', chunk => { responseChunks += chunk; });
-
-    socket.on('end', () => {
-      // 응답 코드 추출
-      const statusLine = responseChunks.split('\r\n')[0];
-      const statusMatch = statusLine.match(/^HTTP\/\d\.\d\s+(\d+)/);
-      const statusCode = statusMatch ? parseInt(statusMatch[1]) : null;
-
-      if (statusCode === 204) {
-        // 응답 바디 없음 (성공 처리)
-        return resolve({});
-      }
-
-      const jsonStartIndex = responseChunks.indexOf('{');
-      if (jsonStartIndex < 0) {
-        return reject(new Error(`응답에서 유효한 JSON을 찾지 못했습니다. 응답 내용: ${responseChunks}`));
-      }
-      try {
-        const jsonResponse = JSON.parse(responseChunks.slice(jsonStartIndex));
-        resolve(jsonResponse);
-      } catch (e) {
-        reject(new Error(`JSON 파싱에 실패했습니다: ${e.message}`));
-      }
-    });
-
-    socket.on('timeout', () => {
-      socket.destroy();
-      reject(new Error('요청 시간 초과'));
-    });
-
-    socket.on('error', (err) => {
-      reject(new Error(`TLS 소켓 오류: ${err.message}`));
-    });
-  });
-}
+  }
 
   async _request(method, path, data = null, retries = 3) {
     for (let attempt = 1; attempt <= retries; attempt++) {
