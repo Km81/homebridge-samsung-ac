@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.9.16 (Final Command/Request Structure Fix)
+// Version 1.9.17 (Definitive Edition with Correct PEM Handling)
 'use strict';
 
 const tls = require('tls');
@@ -8,8 +8,10 @@ const { constants } = require('crypto');
 let HAP;
 let Service, Characteristic;
 
-const defaultCertificate = `
------BEGIN PRIVATE KEY-----
+// --- ▼▼▼ 핵심 수정 부분: PEM을 Private Key와 Certificate Chain으로 분리하고, 들여쓰기 제거 ▼▼▼ ---
+
+// 1. Private Key 부분만 별도로 저장합니다. (들여쓰기 없음)
+const privateKey = `-----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDeXvhcsqRFWfQt
 Qr2TGW+ePJzrKQVNOZmCGFXrBmOKa2gcZvXqDe71upkCmbXxDZbsqU1nFox6WtKy
 za+JE1EaWIjVFV/D0hnnF+CA56851rFjAx7YYVtd9TwJYV1lSfJaQBU/ecUys0SX
@@ -36,8 +38,10 @@ FJWizD1Z5bJk7yycQlsZkTX6g0UX12VmwnHsvhhEUQKBgF0AVToAk+/OPxlA3N4A
 Xn624Ktxzy/58NSLUfQ57AtL2zivoJzfmhUwgYkPsp+63Wklpcq7X7Q2NB7WscC4
 rICqHxNow/KSzwuR6L3u/kewvlsrgTIM2Pp//+QdTK9GGU3HHAZKaNiB8m20k1Bs
 NTANFxBk7alY0G7ZUhuzWkg6
------END PRIVATE KEY-----
------BEGIN CERTIFICATE-----
+-----END PRIVATE KEY-----`;
+
+// 2. Certificate 부분들과 그 중간 인증서들을 모두 합쳐서 저장합니다. (들여쓰기 없음)
+const certificateChain = `-----BEGIN CERTIFICATE-----
 MIIDmzCCAoOgAwIBAgIBCTANBgkqhkiG9w0BAQUFADBIMQswCQYDVQQGEwJLUjEc
 MBoGA1UECgwTU2Ftc3VuZyBFbGVjdHJvbmljczEbMBkGA1UEAwwSUmVtb3RlQWNj
 ZXNzQ0EoQ0UpMCIYDzE5NjAwMTAxMDAwMDAwWhgPMjA2MDAxMDEwMDAwMDBaMGEx
@@ -47,7 +51,7 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3l74XLKkRVn0LUK9kxlv
 njyc6ykFTTmZghhV6wZjimtoHGb16g3u9bqZApm18Q2W7KlNZxaMelrSss2viRNR
 GliI1RVfw9IZ5xfggOevOdaxYwMe2GFbXfU8CWFdZUnyWkAVP3nFMrNEl5SmSbYy
 KCfz8i0RBO/U4zqk8VzF5w6YgLd6IsAKWTMHiec9kFYqrUXqZCN9xg4GHC82piHp
-4EhulmZBFK9q6GNIpeGlV39yEVUV/uXCdi+eOtpBTypvJ6160rKy8GxfZbUpTQP
+4EhulmZBFK9q6GNIpeGlV39yEVUV/uXCdi+eOtpBTypv1J6160rKy8GxfZbUpTQP
 BYKRzd3fWcqgdzAeOqBmMsWGFO2vv0d0QMdI6DX1TxXvK4kF0HKDRIGpW3PH+zeB
 zwIDAQABo3MwcTAdBgNVHQ4EFgQUXzEjosLzA6xbR1KAqnmAp3BNM6MwHwYDVR0j
 BBgwFoAU/12TkC/BOF7xDaZZWJ+DGN6nMxcwDAYDVR0TBAUwAwEB/zAhBgNVHREE
@@ -118,12 +122,11 @@ zM2eoDVfS49+i/cwoi/A7fcZmIYggZho2UJR/GvKc79g6EAhT7/i5alBZF0enMsA
 9okzakb/aohQE9SzsEHnhVKpGAjvu0/TJK9WwX6mkiIEJY+mzQMWgEeQt6WWIgAb
 gSX9NueH80tpZ9KqFnqnOoLxTAa7k0RPBRwyUO9CDhSnlWIEcsD9sqR2M+niOFnT
 KBHcLDDiEU3llprD8FRV3unYrl0F0B2GGdRk
------END CERTIFICATE-----
-`;
+-----END CERTIFICATE-----`;
 
 const API_PORT = 8888;
 const API_DEVICES_PATH = '/devices';
-const PLUGIN_VERSION = '1.9.16';
+const PLUGIN_VERSION = '1.9.17';
 
 class SwingModeHandler {
   constructor(type) { this.type = type; }
@@ -175,8 +178,9 @@ class SamsungAirco {
     this.tlsOptions = {
       host: this.ip,
       port: API_PORT,
-      cert: defaultCertificate,
-      key: defaultCertificate,
+      // ChatGPT 제안(2): key와 cert를 분리하여 전달
+      key: privateKey,
+      cert: certificateChain,
       rejectUnauthorized: false,
       honorCipherOrder: true,
       ciphers: 'DEFAULT@SECLEVEL=0',
@@ -185,7 +189,7 @@ class SamsungAirco {
       secureOptions: constants.SSL_OP_LEGACY_SERVER_CONNECT,
     };
 
-    this.deviceState = null; // 전체 장치 목록({Devices: [...]})을 담을 캐시
+    this.deviceState = null;
     this.lastStateUpdate = 0;
 
     this.aircoSamsung = new Service.HeaterCooler(this.name);
@@ -261,7 +265,6 @@ class SamsungAirco {
         const headerEndIndex = responseChunks.indexOf(separator);
         
         if (headerEndIndex === -1) {
-          // 헤더 구분이 없는 응답 처리: 전체를 body로 간주
           const body = responseChunks.trim();
           if (!body || body.indexOf('{') < 0) return reject(new Error(`응답에서 유효한 JSON 본문을 발견하지 못했습니다.`));
           try {
@@ -333,9 +336,8 @@ class SamsungAirco {
     await this._request('PUT', `/devices/${this.setDeviceIndex}${endpoint}`, data);
     this.log.info(`[${this.name}] [COMMAND] 전송 완료`);
 
-    // Optimistic Update
     this.log.debug(`[${this.name}] 로컬 캐시 즉시 업데이트...`);
-    if (this.deviceState && this.deviceState.Devices[this.setDeviceIndex]) { // setDeviceIndex로 업데이트
+    if (this.deviceState && this.deviceState.Devices[this.setDeviceIndex]) {
       const targetDeviceState = this.deviceState.Devices[this.setDeviceIndex];
       if (endpoint === '' && data.Operation?.power) {
         targetDeviceState.Operation.power = data.Operation.power;
@@ -359,7 +361,6 @@ class SamsungAirco {
       }
     }
 
-    // Background refresh
     this.getCachedState(true).catch(e => {
       this.log.warn(`[${this.name}] 명령 후 상태 동기화 실패 (무시됨):`, e.message);
     });
@@ -404,12 +405,10 @@ class SamsungAirco {
     return [this.informationService, this.aircoSamsung];
   }
 
-  // --- ▼▼▼ Characteristic Handlers (최종 안정화 적용) ▼▼▼ ---
-  
   async getActive() {
     this.log.debug(`[${this.name}] GET Active`);
-    // deviceState 전체가 아닌, 해당 인덱스의 장치 상태를 가져옴
-    const currentDeviceState = this.deviceState?.Devices?.[this.deviceIndex];
+    const state = await this.getCachedState();
+    const currentDeviceState = state?.Devices?.[this.deviceIndex];
     if (!currentDeviceState) {
         throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
@@ -419,17 +418,10 @@ class SamsungAirco {
   }
 
   async setActive(value) {
+    const powerCmd = value ? 'On' : 'Off';
+    this.log.info(`[${this.name}] SET Active -> ${powerCmd}`);
     try {
-      if (value) {
-        this.log.info(`[${this.name}] SET Active -> ON (전원 켜고 1초 후 제습 모드로 변경)`);
-        await this.sendCommand('', { "Operation": { "power": "On" } });
-        this.log.debug(`[${this.name}] > 모드 변경을 위해 1초 대기...`);
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        await this.sendCommand('/mode', { "modes": ["Dry"] });
-      } else {
-        this.log.info(`[${this.name}] SET Active -> OFF`);
-        await this.sendCommand('', { "Operation": { "power": "Off" } });
-      }
+      await this.sendCommand('', { Operation: { power: powerCmd } });
     } catch (e) {
       this.log.error(`[${this.name}] SET Active 실패:`, e.message);
       throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
@@ -438,7 +430,8 @@ class SamsungAirco {
 
   async getCurrentHeaterCoolerState() {
     this.log.debug(`[${this.name}] GET CurrentState`);
-    const currentDeviceState = this.deviceState?.Devices?.[this.deviceIndex];
+    const state = await this.getCachedState();
+    const currentDeviceState = state?.Devices?.[this.deviceIndex];
     if (!currentDeviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
 
     if (currentDeviceState.Operation.power !== 'On') {
@@ -469,7 +462,8 @@ class SamsungAirco {
   
   async getCurrentTemperature() {
     this.log.debug(`[${this.name}] GET CurrentTemperature`);
-    const currentDeviceState = this.deviceState?.Devices?.[this.deviceIndex];
+    const state = await this.getCachedState();
+    const currentDeviceState = state?.Devices?.[this.deviceIndex];
     if (!currentDeviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     const temp = currentDeviceState.Temperatures[0].current;
     this.log.info(`[${this.name}] > CurrentTemperature: ${temp}°C`);
@@ -478,7 +472,8 @@ class SamsungAirco {
 
   async getTargetTemperature() {
     this.log.debug(`[${this.name}] GET TargetTemperature`);
-    const currentDeviceState = this.deviceState?.Devices?.[this.deviceIndex];
+    const state = await this.getCachedState();
+    const currentDeviceState = state?.Devices?.[this.deviceIndex];
     if (!currentDeviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     const temp = currentDeviceState.Temperatures[0].desired;
     this.log.info(`[${this.name}] > TargetTemperature: ${temp}°C`);
@@ -497,7 +492,8 @@ class SamsungAirco {
   
   async getSwingMode() {
     this.log.debug(`[${this.name}] GET SwingMode`);
-    const currentDeviceState = this.deviceState?.Devices?.[this.deviceIndex];
+    const state = await this.getCachedState();
+    const currentDeviceState = state?.Devices?.[this.deviceIndex];
     if (!currentDeviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     const isEnabled = this.swingModeHandler.getValue(currentDeviceState);
     this.log.info(`[${this.name}] > SwingMode: ${isEnabled ? 'ENABLED' : 'DISABLED'}`);
@@ -518,7 +514,8 @@ class SamsungAirco {
 
   async getLockPhysicalControls() {
     this.log.debug(`[${this.name}] GET LockControls`);
-    const currentDeviceState = this.deviceState?.Devices?.[this.deviceIndex];
+    const state = await this.getCachedState();
+    const currentDeviceState = state?.Devices?.[this.deviceIndex];
     if (!currentDeviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     const isLocked = currentDeviceState.Mode.options.includes('Autoclean_On');
     this.log.info(`[${this.name}] > LockControls: ${isLocked ? 'ENABLED' : 'DISABLED'}`);
