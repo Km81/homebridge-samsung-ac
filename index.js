@@ -1,9 +1,8 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.9.9 (Final Stable Version)
+// Version 1.9.10 (Final Stable Version using Raw TLS Socket)
 'use strict';
 
-const https = require('https');
-const fs = require('fs');
+const tls = require('tls');
 const { constants } = require('crypto');
 
 let HAP;
@@ -124,7 +123,7 @@ KBHcLDDiEU3llprD8FRV3unYrl0F0B2GGdRk
 
 const API_PORT = 8888;
 const API_DEVICES_PATH = '/devices';
-const PLUGIN_VERSION = '1.9.9'; // 최종 버전
+const PLUGIN_VERSION = '1.9.10'; // 최종 버전
 
 class SwingModeHandler {
   constructor(type) { this.type = type; }
@@ -171,9 +170,10 @@ class SamsungAirco {
     if (!this.ip || !this.token) {
       throw new Error(`[${this.name}] 필수 설정(ip, token)이 누락되었습니다.`);
     }
-    
-    // https.Agent를 사용하기 위한 옵션 객체
-    this.httpsAgent = new https.Agent({
+
+    this.tlsOptions = {
+      host: this.ip,
+      port: API_PORT,
       cert: defaultCertificate,
       key: defaultCertificate,
       rejectUnauthorized: false,
@@ -182,7 +182,7 @@ class SamsungAirco {
       minVersion: 'TLSv1',
       maxVersion: 'TLSv1',
       secureOptions: constants.SSL_OP_LEGACY_SERVER_CONNECT,
-    });
+    };
 
     this.deviceState = null;
     this.lastStateUpdate = 0;
@@ -216,69 +216,65 @@ class SamsungAirco {
     }
   }
 
-  // --- ▼▼▼ 통신 방식을 표준 https.request로 되돌립니다 ▼▼▼ ---
+  _rawRequest(path, method, data) {
+    return new Promise((resolve, reject) => {
+      const socket = tls.connect(this.tlsOptions, () => {
+        const requestData = [
+          `${method} ${path} HTTP/1.0`,
+          `Authorization: Bearer ${this.token}`,
+          'Connection: close',
+          '\r\n'
+        ].join('\r\n');
+        
+        socket.write(requestData);
+        if (data) {
+          socket.write(JSON.stringify(data));
+        }
+      });
+
+      let responseChunks = '';
+      socket.setEncoding('utf8');
+      socket.on('data', chunk => {
+        responseChunks += chunk;
+      });
+      socket.on('end', () => {
+        const jsonStartIndex = responseChunks.indexOf('{');
+        if (jsonStartIndex < 0) {
+          this.log.debug(`[${this.name}] 수신된 비정상 응답:`, responseChunks);
+          return reject(new Error(`에어컨으로부터 유효한 JSON 응답을 받지 못했습니다.`));
+        }
+        try {
+          const jsonResponse = JSON.parse(responseChunks.slice(jsonStartIndex));
+          resolve(jsonResponse);
+        } catch (e) {
+          this.log.error(`[${this.name}] 응답 JSON 파싱 실패. 원본 데이터:`, responseChunks);
+          reject(new Error(`응답 데이터 JSON 파싱에 실패했습니다.`));
+        }
+      });
+      socket.on('timeout', () => {
+        socket.destroy();
+        reject(new Error('요청 시간 초과'));
+      });
+      socket.on('error', (err) => {
+        reject(new Error(`TLS 소켓 오류: ${err.message}`));
+      });
+    });
+  }
+
   async _request(method, path, data = null, retries = 3) {
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        return await new Promise((resolve, reject) => {
-          const options = {
-            hostname: this.ip,
-            port: API_PORT,
-            path,
-            method,
-            agent: this.httpsAgent, // TLS 호환성 옵션이 적용된 Agent 사용
-            timeout: this.timeout,
-            headers: {
-              'Authorization': `Bearer ${this.token}`,
-              'Connection': 'close', // Parse Error 방지를 위한 핵심 헤더
-            }
-          };
-
-          if (data) {
-            const postData = JSON.stringify(data);
-            options.headers['Content-Type'] = 'application/json';
-            options.headers['Content-Length'] = Buffer.byteLength(postData);
-          }
-
-          const req = https.request(options, res => {
-            if (res.statusCode < 200 || res.statusCode >= 300) {
-              return reject(new Error(`요청 실패, 상태 코드: ${res.statusCode}`));
-            }
-            const body = [];
-            res.on('data', chunk => body.push(chunk));
-            res.on('end', () => {
-              try {
-                const responseString = Buffer.concat(body).toString();
-                // 응답이 비어있는 경우 빈 객체로 처리
-                resolve(JSON.parse(responseString || '{}'));
-              } catch (e) {
-                reject(new Error(`응답 JSON 파싱 오류: ${e.message}`));
-              }
-            });
-          });
-
-          req.on('error', reject);
-          req.on('timeout', () => {
-            req.destroy();
-            reject(new Error('요청 시간 초과'));
-          });
-          
-          if (data) {
-            req.write(JSON.stringify(data));
-          }
-          req.end();
-        });
+        return await this._rawRequest(path, method, data);
       } catch (e) {
         if (attempt === retries) {
           this.log.error(`[${this.name}] 최종 요청 실패 (${attempt}회 시도): ${e.message}`);
           throw e;
         }
         this.log.warn(`[${this.name}] 요청 실패, 재시도 ${attempt}/${retries}... (${e.message})`);
-        await new Promise(res => setTimeout(res, 1000 * attempt));
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
       }
     }
   }
-  // --- ▲▲▲ 여기까지 수정된 부분입니다 ▲▲▲ ---
 
   async getCachedState(force = false) {
     const now = Date.now();
