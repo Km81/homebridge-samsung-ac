@@ -1,10 +1,9 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.9.26 (Fixed cert path: cert/cert.pem, HTTP/1.1 + Header Fix)
+// Version 1.9.27 (Polling Log Enabled)
 'use strict';
 
 const tls = require('tls');
 const fs = require('fs');
-const path = require('path');
 const { constants } = require('crypto');
 
 let HAP;
@@ -12,12 +11,10 @@ let Service, Characteristic;
 
 const API_PORT = 8888;
 const API_DEVICES_PATH = '/devices';
-const PLUGIN_VERSION = '1.9.26';
+const PLUGIN_VERSION = '1.9.27';
 
 class SwingModeHandler {
-  constructor(type) {
-    this.type = type;
-  }
+  constructor(type) { this.type = type; }
   getValue(state) {
     if (!state) return false;
     if (this.type === 'wind') return state.Wind?.direction === 'Up_And_Low';
@@ -33,7 +30,7 @@ class SwingModeHandler {
   }
 }
 
-module.exports = function (homebridge) {
+module.exports = function(homebridge) {
   HAP = homebridge.hap;
   Service = HAP.Service;
   Characteristic = HAP.Characteristic;
@@ -46,11 +43,8 @@ class SamsungAirco {
     this.name = config.name;
     this.ip = config.ip;
     this.token = config.token;
-
-    const defaultCertPath = path.join(__dirname, 'cert', 'cert.pem');
-    this.certPath = defaultCertPath;
-    this.keyPath = defaultCertPath;
-
+    this.certPath = config.certPath || config.patchCert || __dirname + '/cert/cert.pem';
+    this.keyPath = config.keyPath || this.certPath;
     this.deviceIndex = config.deviceIndex || 0;
     this.setDeviceIndex = config.setDeviceIndex ?? this.deviceIndex;
     this.swingModeType = config.swingModeType || 'comfort';
@@ -58,6 +52,10 @@ class SamsungAirco {
     this.timeout = config.timeout || 5000;
     this.pollingInterval = config.pollingInterval;
     this.swingModeHandler = new SwingModeHandler(this.swingModeType);
+
+    if (!this.ip || !this.token || !this.certPath) {
+      throw new Error(`[${this.name}] 필수 설정(ip, token, certPath)이 누락되었습니다.`);
+    }
 
     try {
       fs.accessSync(this.certPath, fs.constants.R_OK);
@@ -90,14 +88,14 @@ class SamsungAirco {
       .setCharacteristic(Characteristic.FirmwareRevision, PLUGIN_VERSION);
 
     this.startPolling();
-    this.log.info(`[${this.name}] Samsung AC Plugin v${PLUGIN_VERSION} 초기화 완료 (HTTP/1.1 + Header Fix + cert/cert.pem 고정)`);
+    this.log.info(`[${this.name}] Samsung AC Plugin v${PLUGIN_VERSION} 초기화 완료 (HTTP/1.1 + Header Fix)`);
   }
 
   startPolling() {
     if (this.pollingInterval > 0) {
       this.log.info(`[${this.name}] ${this.pollingInterval}초 간격으로 상태 폴링을 시작합니다.`);
       setInterval(() => {
-        this.log.debug(`[${this.name}] 주기적인 상태 업데이트 실행...`);
+        this.log.info(`[${this.name}] 주기적인 상태 업데이트 실행...`);
         this.getCachedState(true).catch(e => this.log.error(`[${this.name}] 폴링 실패:`, e.message));
       }, this.pollingInterval * 1000);
     }
