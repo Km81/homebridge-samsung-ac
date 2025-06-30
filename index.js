@@ -1,14 +1,14 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.9.8 (Final Polished Version with Enhanced Logging)
+// Version 1.9.9 (Final Stable Version)
 'use strict';
 
-const tls = require('tls');
+const https = require('https');
+const fs = require('fs');
 const { constants } = require('crypto');
 
 let HAP;
 let Service, Characteristic;
 
-// 인증서 내장
 const defaultCertificate = `
 -----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDeXvhcsqRFWfQt
@@ -124,7 +124,7 @@ KBHcLDDiEU3llprD8FRV3unYrl0F0B2GGdRk
 
 const API_PORT = 8888;
 const API_DEVICES_PATH = '/devices';
-const PLUGIN_VERSION = '1.9.8';
+const PLUGIN_VERSION = '1.9.9'; // 최종 버전
 
 class SwingModeHandler {
   constructor(type) { this.type = type; }
@@ -151,10 +151,10 @@ module.exports = function(homebridge) {
 };
 
 class SamsungAirco {
-  constructor(log, config, api) { // api 파라미터 추가
+  constructor(log, config, api) {
     this.log = log;
     this.config = config;
-    this.api = api; // api 객체 저장
+    this.api = api;
     this.name = config.name;
     this.ip = config.ip;
     this.token = config.token;
@@ -165,16 +165,15 @@ class SamsungAirco {
     this.cacheDuration = config.cacheDuration || 30000;
     this.timeout = config.timeout || 5000;
     this.pollingInterval = config.pollingInterval;
-    this.pollingIntervalId = null; // 폴링 타이머 ID를 저장할 변수
+    this.pollingIntervalId = null; 
     this.swingModeHandler = new SwingModeHandler(this.swingModeType);
 
     if (!this.ip || !this.token) {
       throw new Error(`[${this.name}] 필수 설정(ip, token)이 누락되었습니다.`);
     }
-
-    this.tlsOptions = {
-      host: this.ip,
-      port: API_PORT,
+    
+    // https.Agent를 사용하기 위한 옵션 객체
+    this.httpsAgent = new https.Agent({
       cert: defaultCertificate,
       key: defaultCertificate,
       rejectUnauthorized: false,
@@ -183,7 +182,7 @@ class SamsungAirco {
       minVersion: 'TLSv1',
       maxVersion: 'TLSv1',
       secureOptions: constants.SSL_OP_LEGACY_SERVER_CONNECT,
-    };
+    });
 
     this.deviceState = null;
     this.lastStateUpdate = 0;
@@ -197,7 +196,6 @@ class SamsungAirco {
 
     this.startPolling();
 
-    // Homebridge 종료 시 폴링 타이머를 정리하는 로직 추가
     this.api.on('shutdown', () => {
       this.log.info(`[${this.name}] Homebridge가 종료됩니다. 폴링 타이머를 정리합니다.`);
       if (this.pollingIntervalId) {
@@ -211,7 +209,6 @@ class SamsungAirco {
   startPolling() {
     if (this.pollingInterval > 0) {
       this.log.info(`[${this.name}] ${this.pollingInterval}초 간격으로 상태 폴링을 시작합니다.`);
-      // setInterval의 ID를 저장
       this.pollingIntervalId = setInterval(() => {
         this.log.debug(`[${this.name}] 주기적인 상태 업데이트 실행...`);
         this.getCachedState(true).catch(e => this.log.error(`[${this.name}] 폴링 실패:`, e.message));
@@ -219,66 +216,69 @@ class SamsungAirco {
     }
   }
 
-  _rawRequest(path, method, data) {
-    return new Promise((resolve, reject) => {
-      const socket = tls.connect(this.tlsOptions, () => {
-        const requestData = [
-          `${method} ${path} HTTP/1.0`,
-          `Authorization: Bearer ${this.token}`,
-          'Connection: close',
-          '\r\n'
-        ].join('\r\n');
-        
-        socket.write(requestData);
-        if (data) {
-          socket.write(JSON.stringify(data));
-        }
-      });
-
-      let responseChunks = '';
-      socket.setEncoding('utf8');
-      socket.on('data', chunk => {
-        responseChunks += chunk;
-      });
-      socket.on('end', () => {
-        const jsonStartIndex = responseChunks.indexOf('{');
-        if (jsonStartIndex < 0) {
-          // 디버깅을 위해 수신된 전체 응답을 로그에 남김
-          this.log.debug(`[${this.name}] 수신된 비정상 응답:`, responseChunks);
-          return reject(new Error(`에어컨으로부터 유효한 JSON 응답을 받지 못했습니다.`));
-        }
-        try {
-          const jsonResponse = JSON.parse(responseChunks.slice(jsonStartIndex));
-          resolve(jsonResponse);
-        } catch (e) {
-          this.log.error(`[${this.name}] 응답 JSON 파싱 실패. 원본 데이터:`, responseChunks);
-          reject(new Error(`응답 데이터 JSON 파싱에 실패했습니다.`));
-        }
-      });
-      socket.on('timeout', () => {
-        socket.destroy();
-        reject(new Error('요청 시간 초과'));
-      });
-      socket.on('error', (err) => {
-        reject(new Error(`TLS 소켓 오류: ${err.message}`));
-      });
-    });
-  }
-
+  // --- ▼▼▼ 통신 방식을 표준 https.request로 되돌립니다 ▼▼▼ ---
   async _request(method, path, data = null, retries = 3) {
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        return await this._rawRequest(path, method, data);
+        return await new Promise((resolve, reject) => {
+          const options = {
+            hostname: this.ip,
+            port: API_PORT,
+            path,
+            method,
+            agent: this.httpsAgent, // TLS 호환성 옵션이 적용된 Agent 사용
+            timeout: this.timeout,
+            headers: {
+              'Authorization': `Bearer ${this.token}`,
+              'Connection': 'close', // Parse Error 방지를 위한 핵심 헤더
+            }
+          };
+
+          if (data) {
+            const postData = JSON.stringify(data);
+            options.headers['Content-Type'] = 'application/json';
+            options.headers['Content-Length'] = Buffer.byteLength(postData);
+          }
+
+          const req = https.request(options, res => {
+            if (res.statusCode < 200 || res.statusCode >= 300) {
+              return reject(new Error(`요청 실패, 상태 코드: ${res.statusCode}`));
+            }
+            const body = [];
+            res.on('data', chunk => body.push(chunk));
+            res.on('end', () => {
+              try {
+                const responseString = Buffer.concat(body).toString();
+                // 응답이 비어있는 경우 빈 객체로 처리
+                resolve(JSON.parse(responseString || '{}'));
+              } catch (e) {
+                reject(new Error(`응답 JSON 파싱 오류: ${e.message}`));
+              }
+            });
+          });
+
+          req.on('error', reject);
+          req.on('timeout', () => {
+            req.destroy();
+            reject(new Error('요청 시간 초과'));
+          });
+          
+          if (data) {
+            req.write(JSON.stringify(data));
+          }
+          req.end();
+        });
       } catch (e) {
         if (attempt === retries) {
           this.log.error(`[${this.name}] 최종 요청 실패 (${attempt}회 시도): ${e.message}`);
           throw e;
         }
         this.log.warn(`[${this.name}] 요청 실패, 재시도 ${attempt}/${retries}... (${e.message})`);
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+        await new Promise(res => setTimeout(res, 1000 * attempt));
       }
     }
   }
+  // --- ▲▲▲ 여기까지 수정된 부분입니다 ▲▲▲ ---
 
   async getCachedState(force = false) {
     const now = Date.now();
@@ -360,10 +360,15 @@ class SamsungAirco {
   }
 
   async setActive(value) {
-    const powerCmd = value ? 'On' : 'Off';
-    this.log.info(`[${this.name}] SET Active -> ${powerCmd}`);
+    const targetState = value ? '제습(Dry) 모드로 켜기' : '끄기';
+    this.log.info(`[${this.name}] SET Active -> ${targetState}`);
     try {
-      await this.sendCommand('', { Operation: { power: powerCmd } });
+      if (value) {
+        await this.sendCommand('/mode', { "modes": ["Dry"] });
+      } else {
+        await this.sendCommand('', { "Operation": { "power": "Off" } });
+      }
+      this.log.info(`[${this.name}] SET Active 완료`);
     } catch (e) {
       this.log.error(`[${this.name}] SET Active 오류:`, e.message);
       throw e;
@@ -402,7 +407,6 @@ class SamsungAirco {
 
   async setTargetHeaterCoolerState(value) {
     this.log.info(`[${this.name}] SET TargetState -> ${value} (무시됨)`);
-    // 이 플러그인은 COOL 모드만 지원하므로, 사용자가 다른 값으로 변경 시도 시 무시하고 로그만 남김.
   }
   
   async getCurrentTemperature() {
