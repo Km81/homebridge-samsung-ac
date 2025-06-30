@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.9.5 (State Handler Logic Hotfix)
+// Version 1.9.6 (Final Compatibility Patch for modern Node.js with Embedded Certificate)
 'use strict';
 
 const tls = require('tls');
@@ -9,28 +9,127 @@ const { constants } = require('crypto');
 let HAP;
 let Service, Characteristic;
 
+// --- ac14k_m.pem 파일의 내용을 코드에 직접 내장 ---
+const defaultCertificate = `
+-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDeXvhcsqRFWfQt
+Qr2TGW+ePJzrKQVNOZmCGFXrBmOKa2gcZvXqDe71upkCmbXxDZbsqU1nFox6WtKy
+za+JE1EaWIjVFV/D0hnnF+CA56851rFjAx7YYVtd9TwJYV1lSfJaQBU/ecUys0SX
+lKZJtjIoJ/PyLREE79TjOqTxXMXnDpiAt3oiwApZMweJ5z2QViqtRepkI33GDgYc
+LzamIengSG6WZkEUr2roY0il4aVXf3IRVRX+5cJ2L5462kFPKm/UnrXrSsrLwbF9
+ltSlNA8FgpHN3d9ZyqB3MB46oGYyxYYU7a+/R3RAx0joNfVPFe8riQXQcoNEgalb
+c8f7N4HPAgMBAAECggEABL80QA5UMWLNMpYlI9m8Jz2V//MdONvM6hkI5H57a34F
+d+2+vCNWAYrdL1AGsUGgAidPDq9NimMb8lMvtxZhedV//kR5id2XTfaVhUrs06hA
+myN66hWR9LyCbpTUgJAGi2Soz3US/5USFsZGknZANdk8fOP3ZAqWmc8rrDdVxivg
+Z3qjiqgIZg24XsZmnK/QJejP4FLMqm6YUouH//u9xSKvTwkg89qxvygW9xNBNfi/
+LrBHip/k8LnynKRE2odQWt74HcTjbZW4rxXrJ0tqDSIh8bUB23mRjFh1k4aKXnz3
+Y/CDsfxvAutVi85/zyxYaIT6daP+PxvywwgjVhYHIQKBgQDyMxmGdi5kk3ePv0lM
+lC28gVNhgKfhsXL8xIzcd/UM3eEK4baA+AKI9p6ifZ8g90NUJGuHxCp8/9yOKcmk
+tY5toE45nH4fH9Z3j9NtWHMhXJDGWV+DjeiWmshbUqd7/OoIl1vig1npQqX+PXJR
+pwDHnjkQbkyum4k8/IruHx813wKBgQDrCqK0rBkMaarr5eyOJ9BxhCej8i5kCzm7
+XSaNgXtpBIQ4Y4r412M2JWaSLnDxlAc0iUhNGnIn4zkEP2HzX5JU4Yto9YAlRZnu
+NQSvuVgyLiBCbS7WrRAlsNpTeCU3m+c5QNXBzBlHCiTdw3WS4bINOftsB3xnlJ+D
+y/0YZozSEQKBgQCgWV5z3Dh40/0bSVyA+7WQENsgOWpsjOwBFyvfJvgxLZC5gJgw
+qIIdJZH/KEY7MBj+UyJx/1jV6xudb2MVzjHeuHwxvj7t4kk+XRVwVlfa5YrgFvma
+glBTrWQquf0ypE5Zo8PsomPbgAmf2hSepH9qqYFENJJGI6lnnBdq8WXbZwKBgQCR
+p3ye5At9wrnWCB0pFwk4X4JFOd5/xukW8CnlBTmaId9iJmXHwYpM0q6Wpkr9mhNA
+/lYc2eemSkxaEoE71Z0UFtVSzNiFwHUcxiRKVVyPdEAvigO9q2/XO5qAoXLG3ElV
+FJWizD1Z5bJk7yycQlsZkTX6g0UX12VmwnHsvhhEUQKBgF0AVToAk+/OPxlA3N4A
+Xn624Ktxzy/58NSLUfQ57AtL2zivoJzfmhUwgYkPsp+63Wklpcq7X7Q2NB7WscC4
+rICqHxNow/KSzwuR6L3u/kewvlsrgTIM2Pp//+QdTK9GGU3HHAZKaNiB8m20k1Bs
+NTANFxBk7alY0G7ZUhuzWkg6
+-----END PRIVATE KEY-----
+-----BEGIN CERTIFICATE-----
+MIIDmzCCAoOgAwIBAgIBCTANBgkqhkiG9w0BAQUFADBIMQswCQYDVQQGEwJLUjEc
+MBoGA1UECgwTU2Ftc3VuZyBFbGVjdHJvbmljczEbMBkGA1UEAwwSUmVtb3RlQWNj
+ZXNzQ0EoQ0UpMCIYDzE5NjAwMTAxMDAwMDAwWhgPMjA2MDAxMDEwMDAwMDBaMGEx
+CzAJBgNVBAYTAktSMRwwGgYDVQQKExNTYW1zdW5nIEVsZWN0cm9uaWNzMRAwDgYD
+VQQDFAdBQzE0S19NMSIwIAYJKoZIhvcNAQkBFhNBQzE0S19NQHNhbXN1bmcuY29t
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3l74XLKkRVn0LUK9kxlv
+njyc6ykFTTmZghhV6wZjimtoHGb16g3u9bqZApm18Q2W7KlNZxaMelrSss2viRNR
+GliI1RVfw9IZ5xfggOevOdaxYwMe2GFbXfU8CWFdZUnyWkAVP3nFMrNEl5SmSbYy
+KCfz8i0RBO/U4zqk8VzF5w6YgLd6IsAKWTMHiec9kFYqrUXqZCN9xg4GHC82piHp
+4EhulmZBFK9q6GNIpeGlV39yEVUV/uXCdi+eOtpBTypv1J6160rKy8GxfZbUpTQP
+BYKRzd3fWcqgdzAeOqBmMsWGFO2vv0d0QMdI6DX1TxXvK4kF0HKDRIGpW3PH+zeB
+zwIDAQABo3MwcTAdBgNVHQ4EFgQUXzEjosLzA6xbR1KAqnmAp3BNM6MwHwYDVR0j
+BBgwFoAU/12TkC/BOF7xDaZZWJ+DGN6nMxcwDAYDVR0TBAUwAwEB/zAhBgNVHREE
+GjAYggtzYW1zdW5nLmNvbYIJbG9jYWxob3N0MA0GCSqGSIb3DQEBBQUAA4IBAQBW
+0mStlbdvrHqDJ+KOKVf0C/y9FKTODqo/6/wJNZeZ+8ezPza4nFq70MwQYTpSbZhz
+5w8bQP9fwSAoa2Vki8ZwcSd85Vi2tHz9O4C7d7zBA3FU8AL3NoEMFv6OGWGPnTY5
+mG/Hn+LxuwQddlysfbRDds1LBY8DBUJNAmIeeWqA5Eg8DW6xJUwHeXUElJpSXHW6
+XGvpWgAhXqoIf6TirdCrPY6+IzV/FcuVtBDGi+JoxgrMfMLgLEVjeSY96DJinHgZ
+RT0FkA5e06Z+fqHh9Btu+aed+kuGSmya/A5wStOkGeKEbezbbN2gtW07lN6VxX3J
+OCgygA+hmnBVnRDA8Jzu
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIIDUTCCAjmgAwIBAgIBADANBgkqhkiG9w0BAQUFADA6MQswCQYDVQQGEwJLUjEc
+MBoGA1UECgwTU2Ftc3VuZyBFbGVjdHJvbmljczENMAsGA1UEAwwEQ0VDQTAiGA8x
+OTYwMDEwMTAwMDAwMFoYDzIwNjAwMTAxMDAwMDAwWjBIMQswCQYDVQQGEwJLUjEc
+MBoGA1UECgwTU2Ftc3VuZyBFbGVjdHJvbmljczEbMBkGA1UEAwwSUmVtb3RlQWNj
+ZXNzQ0EoQ0UpMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtatz9GvV
+qbV395Whnad9MC9TEOiXuwnw37QHvQUwOTFgc6AenX5SORfb4UTw+0ApFNba9DlY
+Xx/K9E5b5DGasDVGGTn+z+6MPB7GuAjkP+WSRwHMjrHRNqrBOr1YJUw3SIbMkRoT
+460k9AD9DQDBORRtGBGwcBw6BvdasA+/L3Q63aJ7pDoj3qxocdcgk/zFq0OrxFDL
+PMTL7a+a9DS8G10K73XGgES0RBwwhlXXVuLUprD6RgbeLHFsPpIq5vzzEpAYMCF6
+vkZKjDGEW7JVTgUu0E37niN3NQv1gIXlJusDH6RWfFQxENZsdFkT/l+kTuY283Ga
+2Ei1HsW3Xpt88QIDAQABo1AwTjAdBgNVHQ4EFgQU/12TkC/BOF7xDaZZWJ+DGN6n
+MxcwHwYDVR0jBBgwFoAURwF9jkihypJa2u6zRwKrZwRlACswDAYDVR0TBAUwAwEB
+/zANBgkqhkiG9w0BAQUFAAOCAQEAZkjxN4O92e1RTaXx1mpazyT98sJVl46R51s1
+CTPq35HVfTiBOAu0C5MR6a9vIIFJScy5h69VN4OwDDbMhe/k3m6EfAutlL7lRrre
+OT853HJahxdavzaXJ7tcrI/yDJI0X5GbQ8W74mmDt2/5rXsaB+h+NrToGqf6Hvf/
+m7ZhUnCAt0hhLmltxTVYS25s9KoiIH0rXOb9cqUFsmBMEG2pHWC5AiSc0cXJm+kU
+3z0B2GS+4IjGdVr3FTPzzTXrpqq/X1cIVKAum5WfsFMS0CRvqTVNVwYg52n69T2B
+NPCCEpp9rsIieZ58jsnc506Uc+1Vp+NmBI2A/ecypZxSb6v9gg==
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIIDRTCCAi2gAwIBAgIBBDANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJLUjEc
+MBoGA1UECgwTU2Ftc3VuZyBFbGVjdHJvbmljczEPMA0GA1UEAwwGUk9PVENBMCIY
+DzE5NjAwMTAxMDAwMDAwWhgPMjA2MDAxMDEwMDAwMDBaMDoxCzAJBgNVBAYTAktS
+MRwwGgYDVQQKDBNTYW1zdW5nIEVsZWN0cm9uaWNzMQ0wCwYDVQQDDARDRUNBMIIB
+IjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtv1WJJ7tTs/aa1ZZRjMPPLeb
+n/Ev0Y28CSBj/6P031/veZSg/2z65QZUvPjv8MZnIgNoMpxMGbPPO4Dxj+QJthBk
+WydWRPguPyE+w3U4SdayZXWpLZTpKfHco3CklFwEqZtG/wTxHD1oOvtT0e2g5c79
+hNQt9lQ4Wwzqa3MvQd0JyeB4syy2zRLo5NjJZl1BVn2oTt4xGCjjtAXtAqqHEbEf
+pcvB3hPdIpFe6M8zuN22kROKaQ5i4XP4CyEpbFlgKRcWBGQFX3I5f5TdD3Yw1Ril
+OLLL9wFsJ+iWLka9tAIcJKCNOf48p7aXm6COFwmjtCNu4wjQozwi6cycKUgxNQID
+AQABo1AwTjAdBgNVHQ4EFgQURwF9jkihypJa2u6zRwKrZwRlACswHwYDVR0jBBgw
+FoAU7andrmFFrxYM8+93lrn/Fq47sXMwDAYDVR0TBAUwAwEB/zANBgkqhkiG9w0B
+AQUFAAOCAQEATexseQBXSfUR7fFTFxq6aAvHWIN+h3QLeN1sq8KCM4fbdkH3lOUP
+rKW3w1ag62bnJVNjT4xPtzH/DyrqlzQUPTb7S0PfIXt2mu/VURnrmuXidS2grNwv
+eu10gURZaz9N2UZEhY7E80tUZwcjAV+YP8+x3/iRQSrWvcMma/r01eUnwrF4xaE9
+EYtJ/jTRre8MpEH/lg06m+rZf9Lk/yhG6at0YnUAIytThqFV4Cj8T8jBX+KG8BCo
+VyUsFyrO+D6X98gMdTZnLqC1P1iWuxyrOWZTgsf44f5GXzmLqe5KLPvkDb4MywTa
+nXrSOPSkcIgvS6WYw2Rii+e6lfVzqmhAmg==
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIIDRzCCAi+gAwIBAgIBADANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJLUjEc
+MBoGA1UECgwTU2Ftc3VuZyBFbGVjdHJvbmljczEPMA0GA1UEAwwGUk9PVENBMCIY
+DzE5NjAwMTAxMDAwMDAwWhgPMjA2MDAxMDEwMDAwMDBaMDwxCzAJBgNVBAYTAktS
+MRwwGgYDVQQKDBNTYW1zdW5nIEVsZWN0cm9uaWNzMQ8wDQYDVQQDDAZST09UQ0Ew
+ggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCd67g2hzhbIeSBoFfeqbXi
+tzbO4dCWeCigVfmwEDhR1SDA0MfHOVlFpvuFr3WyFPvQZ0ccNrsTpBs5YieI/jZi
+FYWO0ktbqQorL1CIFqBL9kAF+34BYtpl98PgJ1grLOH5T3GugJA7Irw0plEFmOfs
+IydlUIQHl3oqyMIWPa2nIZ/FGi3hAquEPrvzHZB+QO4c+6tV1WLIaCjn88xkYuwz
+uGYxaqJpnGdqhjZRIuHb2DEZPlP1VGdTTAttno36CyWqeHrSC8fXCSu55Zk+1rbC
+Py/phOJjSyce2qk0IebETAYLCLqU7ABJxUxrolMrP37OB+Kqe4RWovaeMcdcNOOt
+AgMBAAGjUDBOMB0GA1UdDgQWBBTtqd2uYUWvFgzz73eWuf8WrjuxczAfBgNVHSME
+GDAWgBTtqd2uYUWvFgzz73eWuf8WrjuxczAMBgNVHRMEBTADAQH/MA0GCSqGSIb3
+DQEBBQUAA4IBAQBkwK95x8JCAnY0F2bMwG5+7QfY+ci8s8m1ODi3v19HECS6nG9j
+SXgwihEtQ3HqvUler+n7aOeAZlgm+BymM2GvuicveYN/nevIvzlpMOn2L6xU19/H
+zM2eoDVfS49+i/cwoi/A7fcZmIYggZho2UJR/GvKc79g6EAhT7/i5alBZF0enMsA
+9okzakb/aohQE9SzsEHnhVKpGAjvu0/TJK9WwX6mkiIEJY+mzQMWgEeQt6WWIgAb
+gSX9NueH80tpZ9KqFnqnOoLxTAa7k0RPBRwyUO9CDhSnlWIEcsD9sqR2M+niOFnT
+KBHcLDDiEU3llprD8FRV3unYrl0F0B2GGdRk
+-----END CERTIFICATE-----
+`;
+
 const API_PORT = 8888;
 const API_DEVICES_PATH = '/devices';
-const PLUGIN_VERSION = '1.9.5'; // 버전 업데이트
+const PLUGIN_VERSION = '1.9.6';
 
-// (SwingModeHandler 등 다른 부분은 변경 없음)
-class SwingModeHandler {
-  constructor(type) { this.type = type; }
-  getValue(state) {
-    if (!state) return false;
-    if (this.type === 'wind') return state.Wind?.direction === 'Up_And_Low';
-    return state.Mode?.options?.includes('Comode_Nano');
-  }
-  getCommand(enable) {
-    if (this.type === 'wind') {
-      const dir = enable ? 'Up_And_Low' : 'Fix';
-      return { endpoint: '/wind', data: { direction: dir } };
-    }
-    const opt = enable ? 'Comode_Nano' : 'Comode_Off';
-    return { endpoint: '/mode', data: { options: [opt] } };
-  }
-}
-
+/**
+ * 플러그인을 Homebridge에 등록하는 메인 함수
+ */
 module.exports = function(homebridge) {
   HAP = homebridge.hap;
   Service = HAP.Service;
@@ -38,14 +137,15 @@ module.exports = function(homebridge) {
   homebridge.registerAccessory('homebridge-samsung-ac', 'SamsungAC', SamsungAirco);
 };
 
+/**
+ * 삼성 에어컨 액세서리 클래스
+ */
 class SamsungAirco {
   constructor(log, config) {
     this.log = log;
     this.name = config.name;
     this.ip = config.ip;
     this.token = config.token;
-    this.certPath = config.certPath || config.patchCert;
-    this.keyPath = config.keyPath || this.certPath;
     this.deviceIndex = config.deviceIndex || 0;
     this.setDeviceIndex = config.setDeviceIndex ?? this.deviceIndex;
     this.swingModeType = config.swingModeType || 'comfort';
@@ -54,22 +154,16 @@ class SamsungAirco {
     this.pollingInterval = config.pollingInterval;
     this.swingModeHandler = new SwingModeHandler(this.swingModeType);
 
-    if (!this.ip || !this.token || !this.certPath) {
-      throw new Error(`[${this.name}] 필수 설정(ip, token, certPath)이 누락되었습니다.`);
+    if (!this.ip || !this.token) {
+      throw new Error(`[${this.name}] 필수 설정(ip, token)이 누락되었습니다.`);
     }
 
-    try {
-      fs.accessSync(this.certPath, fs.constants.R_OK);
-      fs.accessSync(this.keyPath, fs.constants.R_OK);
-    } catch (e) {
-      throw new Error(`[${this.name}] 인증서/키 파일 접근 오류: ${e.message}`);
-    }
-
+    // TLS 호환성을 위한 핵심 설정 객체
     this.tlsOptions = {
       host: this.ip,
       port: API_PORT,
-      cert: fs.readFileSync(this.certPath),
-      key: fs.readFileSync(this.keyPath),
+      cert: defaultCertificate,
+      key: defaultCertificate,
       rejectUnauthorized: false,
       honorCipherOrder: true,
       ciphers: 'DEFAULT@SECLEVEL=0',
@@ -89,10 +183,9 @@ class SamsungAirco {
       .setCharacteristic(Characteristic.FirmwareRevision, PLUGIN_VERSION);
 
     this.startPolling();
-    this.log.info(`[${this.name}] Samsung AC Plugin v${PLUGIN_VERSION} 초기화 완료 (레거시 호환 모드)`);
+    this.log.info(`[${this.name}] Samsung AC Plugin v${PLUGIN_VERSION} 초기화 완료 (인증서 내장)`);
   }
 
-  // ... startPolling, _rawRequest, _request, getCachedState, sendCommand, identify 함수는 변경 없음 ...
   startPolling() {
     if (this.pollingInterval > 0) {
       this.log.info(`[${this.name}] ${this.pollingInterval}초 간격으로 상태 폴링을 시작합니다.`);
@@ -200,11 +293,8 @@ class SamsungAirco {
 
     this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState)
       .onGet(this.getCurrentHeaterCoolerState.bind(this));
-    
-    // --- ▼▼▼ TargetHeaterCoolerState의 setProps 수정 ▼▼▼ ---
+      
     this.aircoSamsung.getCharacteristic(Characteristic.TargetHeaterCoolerState)
-      // .onSet 핸들러를 추가하여 사용자가 모드를 변경하려고 시도할 때 로그를 남기고,
-      // 값은 항상 COOL로 유지되도록 합니다.
       .setProps({ validValues: [Characteristic.TargetHeaterCoolerState.COOL] })
       .onGet(this.getTargetHeaterCoolerState.bind(this))
       .onSet(this.setTargetHeaterCoolerState.bind(this)); 
@@ -228,7 +318,7 @@ class SamsungAirco {
     return [this.informationService, this.aircoSamsung];
   }
 
-  // --- ▼▼▼ Characteristic Handlers 로직 수정 ▼▼▼ ---
+  // --- Characteristic Handlers ---
   
   async getActive() {
     this.log.info(`[${this.name}] GET Active`);
@@ -259,7 +349,6 @@ class SamsungAirco {
     this.log.info(`[${this.name}] GET CurrentState`);
     try {
       const state = await this.getCachedState();
-      // 전원이 꺼져있으면 INACTIVE(0) 반환
       if (state.Operation.power !== 'On') {
         this.log.info(`[${this.name}] > CurrentState: INACTIVE (꺼짐)`);
         return Characteristic.CurrentHeaterCoolerState.INACTIVE;
@@ -267,12 +356,10 @@ class SamsungAirco {
       
       const mode = state.Mode.modes[0];
       const isCooling = ['CoolClean', 'Cool', 'Dry', 'DryClean', 'Auto', 'Wind'].includes(mode);
-      // 이 플러그인은 냉방/제습 모드만 지원하므로, 전원이 켜져있고 냉방 관련 모드이면 COOLING(3) 반환
       if (isCooling) {
           this.log.info(`[${this.name}] > CurrentState: COOLING`);
           return Characteristic.CurrentHeaterCoolerState.COOLING;
       }
-      // 그 외의 경우 (송풍 등)는 IDLE(1)로 처리
       this.log.info(`[${this.name}] > CurrentState: IDLE`);
       return Characteristic.CurrentHeaterCoolerState.IDLE;
     } catch (e) {
@@ -283,14 +370,12 @@ class SamsungAirco {
   
   async getTargetHeaterCoolerState() {
     this.log.info(`[${this.name}] GET TargetState`);
-    // 목표 상태는 이 플러그인에서 항상 COOL(2)로 고정입니다.
     this.log.info(`[${this.name}] > TargetState: COOL`);
     return Characteristic.TargetHeaterCoolerState.COOL;
   }
 
   async setTargetHeaterCoolerState(value) {
-    this.log.info(`[${this.name}] SET TargetState -> ${value}`);
-    // 이 플러그인은 COOL 모드만 지원하므로, 사용자가 다른 값으로 변경 시도 시 무시하고 로그만 남김
+    this.log.info(`[${this.name}] SET TargetState -> ${value} (무시됨)`);
     this.log.info(`[${this.name}] > COOL 모드만 지원하므로 실제 변경은 하지 않음.`);
   }
   
