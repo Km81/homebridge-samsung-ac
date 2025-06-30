@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.9.8 (Final Polished Version)
+// Version 1.9.8 (Final Polished Version with Enhanced Logging)
 'use strict';
 
 const tls = require('tls');
@@ -8,6 +8,7 @@ const { constants } = require('crypto');
 let HAP;
 let Service, Characteristic;
 
+// 인증서 내장
 const defaultCertificate = `
 -----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDeXvhcsqRFWfQt
@@ -150,10 +151,10 @@ module.exports = function(homebridge) {
 };
 
 class SamsungAirco {
-  constructor(log, config, api) {
+  constructor(log, config, api) { // api 파라미터 추가
     this.log = log;
     this.config = config;
-    this.api = api;
+    this.api = api; // api 객체 저장
     this.name = config.name;
     this.ip = config.ip;
     this.token = config.token;
@@ -164,7 +165,7 @@ class SamsungAirco {
     this.cacheDuration = config.cacheDuration || 30000;
     this.timeout = config.timeout || 5000;
     this.pollingInterval = config.pollingInterval;
-    this.pollingIntervalId = null; 
+    this.pollingIntervalId = null; // 폴링 타이머 ID를 저장할 변수
     this.swingModeHandler = new SwingModeHandler(this.swingModeType);
 
     if (!this.ip || !this.token) {
@@ -196,6 +197,7 @@ class SamsungAirco {
 
     this.startPolling();
 
+    // Homebridge 종료 시 폴링 타이머를 정리하는 로직 추가
     this.api.on('shutdown', () => {
       this.log.info(`[${this.name}] Homebridge가 종료됩니다. 폴링 타이머를 정리합니다.`);
       if (this.pollingIntervalId) {
@@ -209,6 +211,7 @@ class SamsungAirco {
   startPolling() {
     if (this.pollingInterval > 0) {
       this.log.info(`[${this.name}] ${this.pollingInterval}초 간격으로 상태 폴링을 시작합니다.`);
+      // setInterval의 ID를 저장
       this.pollingIntervalId = setInterval(() => {
         this.log.debug(`[${this.name}] 주기적인 상태 업데이트 실행...`);
         this.getCachedState(true).catch(e => this.log.error(`[${this.name}] 폴링 실패:`, e.message));
@@ -240,13 +243,16 @@ class SamsungAirco {
       socket.on('end', () => {
         const jsonStartIndex = responseChunks.indexOf('{');
         if (jsonStartIndex < 0) {
+          // 디버깅을 위해 수신된 전체 응답을 로그에 남김
+          this.log.debug(`[${this.name}] 수신된 비정상 응답:`, responseChunks);
           return reject(new Error(`에어컨으로부터 유효한 JSON 응답을 받지 못했습니다.`));
         }
         try {
           const jsonResponse = JSON.parse(responseChunks.slice(jsonStartIndex));
           resolve(jsonResponse);
         } catch (e) {
-          reject(new Error(`응답 데이터 JSON 파싱에 실패했습니다: ${e.message}`));
+          this.log.error(`[${this.name}] 응답 JSON 파싱 실패. 원본 데이터:`, responseChunks);
+          reject(new Error(`응답 데이터 JSON 파싱에 실패했습니다.`));
         }
       });
       socket.on('timeout', () => {
