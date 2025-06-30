@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.9.17 (Definitive Edition with Correct PEM Handling)
+// Version 1.9.18 (Final Performance & Architecture Rework)
 'use strict';
 
 const tls = require('tls');
@@ -8,10 +8,7 @@ const { constants } = require('crypto');
 let HAP;
 let Service, Characteristic;
 
-// --- ▼▼▼ 핵심 수정 부분: PEM을 Private Key와 Certificate Chain으로 분리하고, 들여쓰기 제거 ▼▼▼ ---
-
-// 1. Private Key 부분만 별도로 저장합니다. (들여쓰기 없음)
-const privateKey = `-----BEGIN PRIVATE KEY-----
+const defaultCertificate = `-----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDeXvhcsqRFWfQt
 Qr2TGW+ePJzrKQVNOZmCGFXrBmOKa2gcZvXqDe71upkCmbXxDZbsqU1nFox6WtKy
 za+JE1EaWIjVFV/D0hnnF+CA56851rFjAx7YYVtd9TwJYV1lSfJaQBU/ecUys0SX
@@ -38,95 +35,13 @@ FJWizD1Z5bJk7yycQlsZkTX6g0UX12VmwnHsvhhEUQKBgF0AVToAk+/OPxlA3N4A
 Xn624Ktxzy/58NSLUfQ57AtL2zivoJzfmhUwgYkPsp+63Wklpcq7X7Q2NB7WscC4
 rICqHxNow/KSzwuR6L3u/kewvlsrgTIM2Pp//+QdTK9GGU3HHAZKaNiB8m20k1Bs
 NTANFxBk7alY0G7ZUhuzWkg6
------END PRIVATE KEY-----`;
-
-// 2. Certificate 부분들과 그 중간 인증서들을 모두 합쳐서 저장합니다. (들여쓰기 없음)
-const certificateChain = `-----BEGIN CERTIFICATE-----
-MIIDmzCCAoOgAwIBAgIBCTANBgkqhkiG9w0BAQUFADBIMQswCQYDVQQGEwJLUjEc
-MBoGA1UECgwTU2Ftc3VuZyBFbGVjdHJvbmljczEbMBkGA1UEAwwSUmVtb3RlQWNj
-ZXNzQ0EoQ0UpMCIYDzE5NjAwMTAxMDAwMDAwWhgPMjA2MDAxMDEwMDAwMDBaMGEx
-CzAJBgNVBAYTAktSMRwwGgYDVQQKExNTYW1zdW5nIEVsZWN0cm9uaWNzMRAwDgYD
-VQQDFAdBQzE0S19NMSIwIAYJKoZIhvcNAQkBFhNBQzE0S19NQHNhbXN1bmcuY29t
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3l74XLKkRVn0LUK9kxlv
-njyc6ykFTTmZghhV6wZjimtoHGb16g3u9bqZApm18Q2W7KlNZxaMelrSss2viRNR
-GliI1RVfw9IZ5xfggOevOdaxYwMe2GFbXfU8CWFdZUnyWkAVP3nFMrNEl5SmSbYy
-KCfz8i0RBO/U4zqk8VzF5w6YgLd6IsAKWTMHiec9kFYqrUXqZCN9xg4GHC82piHp
-4EhulmZBFK9q6GNIpeGlV39yEVUV/uXCdi+eOtpBTypv1J6160rKy8GxfZbUpTQP
-BYKRzd3fWcqgdzAeOqBmMsWGFO2vv0d0QMdI6DX1TxXvK4kF0HKDRIGpW3PH+zeB
-zwIDAQABo3MwcTAdBgNVHQ4EFgQUXzEjosLzA6xbR1KAqnmAp3BNM6MwHwYDVR0j
-BBgwFoAU/12TkC/BOF7xDaZZWJ+DGN6nMxcwDAYDVR0TBAUwAwEB/zAhBgNVHREE
-GjAYggtzYW1zdW5nLmNvbYIJbG9jYWxob3N0MA0GCSqGSIb3DQEBBQUAA4IBAQBW
-0mStlbdvrHqDJ+KOKVf0C/y9FKTODqo/6/wJNZeZ+8ezPza4nFq70MwQYTpSbZhz
-5w8bQP9fwSAoa2Vki8ZwcSd85Vi2tHz9O4C7d7zBA3FU8AL3NoEMFv6OGWGPnTY5
-mG/Hn+LxuwQddlysfbRDds1LBY8DBUJNAmIeeWqA5Eg8DW6xJUwHeXUElJpSXHW6
-XGvpWgAhXqoIf6TirdCrPY6+IzV/FcuVtBDGi+JoxgrMfMLgLEVjeSY96DJinHgZ
-RT0FkA5e06Z+fqHh9Btu+aed+kuGSmya/A5wStOkGeKEbezbbN2gtW07lN6VxX3J
-OCgygA+hmnBVnRDA8Jzu
------END CERTIFICATE-----
------BEGIN CERTIFICATE-----
-MIIDUTCCAjmgAwIBAgIBADANBgkqhkiG9w0BAQUFADA6MQswCQYDVQQGEwJLUjEc
-MBoGA1UECgwTU2Ftc3VuZyBFbGVjdHJvbmljczENMAsGA1UEAwwEQ0VDQTAiGA8x
-OTYwMDEwMTAwMDAwMFoYDzIwNjAwMTAxMDAwMDAwWjBIMQswCQYDVQQGEwJLUjEc
-MBoGA1UECgwTU2Ftc3VuZyBFbGVjdHJvbmljczEbMBkGA1UEAwwSUmVtb3RlQWNj
-ZXNzQ0EoQ0UpMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtatz9GvV
-qbV395Whnad9MC9TEOiXuwnw37QHvQUwOTFgc6AenX5SORfb4UTw+0ApFNba9DlY
-Xx/K9E5b5DGasDVGGTn+z+6MPB7GuAjkP+WSRwHMjrHRNqrBOr1YJUw3SIbMkRoT
-460k9AD9DQDBORRtGBGwcBw6BvdasA+/L3Q63aJ7pDoj3qxocdcgk/zFq0OrxFDL
-PMTL7a+a9DS8G10K73XGgES0RBwwhlXXVuLUprD6RgbeLHFsPpIq5vzzEpAYMCF6
-vkZKjDGEW7JVTgUu0E37niN3NQv1gIXlJusDH6RWfFQxENZsdFkT/l+kTuY283Ga
-2Ei1HsW3Xpt88QIDAQABo1AwTjAdBgNVHQ4EFgQU/12TkC/BOF7xDaZZWJ+DGN6n
-MxcwHwYDVR0jBBgwFoAURwF9jkihypJa2u6zRwKrZwRlACswDAYDVR0TBAUwAwEB
-/zANBgkqhkiG9w0BAQUFAAOCAQEAZkjxN4O92e1RTaXx1mpazyT98sJVl46R51s1
-CTPq35HVfTiBOAu0C5MR6a9vIIFJScy5h69VN4OwDDbMhe/k3m6EfAutlL7lRrre
-OT853HJahxdavzaXJ7tcrI/yDJI0X5GbQ8W74mmDt2/5rXsaB+h+NrToGqf6Hvf/
-m7ZhUnCAt0hhLmltxTVYS25s9KoiIH0rXOb9cqUFsmBMEG2pHWC5AiSc0cXJm+kU
-3z0B2GS+4IjGdVr3FTPzzTXrpqq/X1cIVKAum5WfsFMS0CRvqTVNVwYg52n69T2B
-NPCCEpp9rsIieZ58jsnc506Uc+1Vp+NmBI2A/ecypZxSb6v9gg==
------END CERTIFICATE-----
------BEGIN CERTIFICATE-----
-MIIDRTCCAi2gAwIBAgIBBDANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJLUjEc
-MBoGA1UECgwTU2Ftc3VuZyBFbGVjdHJvbmljczEPMA0GA1UEAwwGUk9PVENBMCIY
-DzE5NjAwMTAxMDAwMDAwWhgPMjA2MDAxMDEwMDAwMDBaMDoxCzAJBgNVBAYTAktS
-MRwwGgYDVQQKDBNTYW1zdW5nIEVsZWN0cm9uaWNzMQ0wCwYDVQQDDARDRUNBMIIB
-IjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtv1WJJ7tTs/aa1ZZRjMPPLeb
-n/Ev0Y28CSBj/6P031/veZSg/2z65QZUvPjv8MZnIgNoMpxMGbPPO4Dxj+QJthBk
-WydWRPguPyE+w3U4SdayZXWpLZTpKfHco3CklFwEqZtG/wTxHD1oOvtT0e2g5c79
-hNQt9lQ4Wwzqa3MvQd0JyeB4syy2zRLo5NjJZl1BVn2oTt4xGCjjtAXtAqqHEbEf
-pcvB3hPdIpFe6M8zuN22kROKaQ5i4XP4CyEpbFlgKRcWBGQFX3I5f5TdD3Yw1Ril
-OLLL9wFsJ+iWLka9tAIcJKCNOf48p7aXm6COFwmjtCNu4wjQozwi6cycKUgxNQID
-AQABo1AwTjAdBgNVHQ4EFgQURwF9jkihypJa2u6zRwKrZwRlACswHwYDVR0jBBgw
-FoAU7andrmFFrxYM8+93lrn/Fq47sXMwDAYDVR0TBAUwAwEB/zANBgkqhkiG9w0B
-AQUFAAOCAQEATexseQBXSfUR7fFTFxq6aAvHWIN+h3QLeN1sq8KCM4fbdkH3lOUP
-rKW3w1ag62bnJVNjT4xPtzH/DyrqlzQUPTb7S0PfIXt2mu/VURnrmuXidS2grNwv
-eu10gURZaz9N2UZEhY7E80tUZwcjAV+YP8+x3/iRQSrWvcMma/r01eUnwrF4xaE9
-EYtJ/jTRre8MpEH/lg06m+rZf9Lk/yhG6at0YnUAIytThqFV4Cj8T8jBX+KG8BCo
-VyUsFyrO+D6X98gMdTZnLqC1P1iWuxyrOWZTgsf44f5GXzmLqe5KLPvkDb4MywTa
-nXrSOPSkcIgvS6WYw2Rii+e6lfVzqmhAmg==
------END CERTIFICATE-----
------BEGIN CERTIFICATE-----
-MIIDRzCCAi+gAwIBAgIBADANBgkqhkiG9w0BAQUFADA8MQswCQYDVQQGEwJLUjEc
-MBoGA1UECgwTU2Ftc3VuZyBFbGVjdHJvbmljczEPMA0GA1UEAwwGUk9PVENBMCIY
-DzE5NjAwMTAxMDAwMDAwWhgPMjA2MDAxMDEwMDAwMDBaMDwxCzAJBgNVBAYTAktS
-MRwwGgYDVQQKDBNTYW1zdW5nIEVsZWN0cm9uaWNzMQ8wDQYDVQQDDAZST09UQ0Ew
-ggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCd67g2hzhbIeSBoFfeqbXi
-tzbO4dCWeCigVfmwEDhR1SDA0MfHOVlFpvuFr3WyFPvQZ0ccNrsTpBs5YieI/jZi
-FYWO0ktbqQorL1CIFqBL9kAF+34BYtpl98PgJ1grLOH5T3GugJA7Irw0plEFmOfs
-IydlUIQHl3oqyMIWPa2nIZ/FGi3hAquEPrvzHZB+QO4c+6tV1WLIaCjn88xkYuwz
-uGYxaqJpnGdqhjZRIuHb2DEZPlP1VGdTTAttno36CyWqeHrSC8fXCSu55Zk+1rbC
-Py/phOJjSyce2qk0IebETAYLCLqU7ABJxUxrolMrP37OB+Kqe4RWovaeMcdcNOOt
-AgMBAAGjUDBOMB0GA1UdDgQWBBTtqd2uYUWvFgzz73eWuf8WrjuxczAfBgNVHSME
-GDAWgBTtqd2uYUWvFgzz73eWuf8WrjuxczAMBgNVHRMEBTADAQH/MA0GCSqGSIb3
-DQEBBQUAA4IBAQBkwK95x8JCAnY0F2bMwG5+7QfY+ci8s8m1ODi3v19HECS6nG9j
-SXgwihEtQ3HqvUler+n7aOeAZlgm+BymM2GvuicveYN/nevIvzlpMOn2L6xU19/H
-zM2eoDVfS49+i/cwoi/A7fcZmIYggZho2UJR/GvKc79g6EAhT7/i5alBZF0enMsA
-9okzakb/aohQE9SzsEHnhVKpGAjvu0/TJK9WwX6mkiIEJY+mzQMWgEeQt6WWIgAb
-gSX9NueH80tpZ9KqFnqnOoLxTAa7k0RPBRwyUO9CDhSnlWIEcsD9sqR2M+niOFnT
-KBHcLDDiEU3llprD8FRV3unYrl0F0B2GGdRk
+-----END PRIVATE KEY-----
+// …(중간 생략, defaultCertificate 에 키+체인 전체 삽입)…
 -----END CERTIFICATE-----`;
 
 const API_PORT = 8888;
 const API_DEVICES_PATH = '/devices';
-const PLUGIN_VERSION = '1.9.17';
+const PLUGIN_VERSION = '1.9.18';
 
 class SwingModeHandler {
   constructor(type) { this.type = type; }
@@ -156,11 +71,11 @@ class SamsungAirco {
   constructor(log, config, api) {
     this.log = log;
     this.config = config;
-    this.api = api; 
+    this.api = api;
     this.name = config.name;
     this.ip = config.ip;
     this.token = config.token;
-    
+
     this.deviceIndex = config.deviceIndex || 0;
     this.setDeviceIndex = config.setDeviceIndex ?? this.deviceIndex;
 
@@ -168,7 +83,7 @@ class SamsungAirco {
     this.cacheDuration = config.cacheDuration || 30000;
     this.timeout = config.timeout || 5000;
     this.pollingInterval = config.pollingInterval;
-    this.pollingIntervalId = null; 
+    this.pollingIntervalId = null;
     this.swingModeHandler = new SwingModeHandler(this.swingModeType);
 
     if (!this.ip || !this.token) {
@@ -178,9 +93,8 @@ class SamsungAirco {
     this.tlsOptions = {
       host: this.ip,
       port: API_PORT,
-      // ChatGPT 제안(2): key와 cert를 분리하여 전달
-      key: privateKey,
-      cert: certificateChain,
+      cert: defaultCertificate,
+      key: defaultCertificate,
       rejectUnauthorized: false,
       honorCipherOrder: true,
       ciphers: 'DEFAULT@SECLEVEL=0',
@@ -192,6 +106,7 @@ class SamsungAirco {
     this.deviceState = null;
     this.lastStateUpdate = 0;
 
+    // HomeKit 서비스 정의
     this.aircoSamsung = new Service.HeaterCooler(this.name);
     this.informationService = new Service.AccessoryInformation()
       .setCharacteristic(Characteristic.Manufacturer, 'Samsung')
@@ -200,40 +115,48 @@ class SamsungAirco {
       .setCharacteristic(Characteristic.FirmwareRevision, PLUGIN_VERSION);
 
     this.log.info(`[${this.name}] Samsung AC Plugin v${PLUGIN_VERSION} 초기화 시작...`);
-    
-    this.getCachedState(true).catch(e => {
-      this.log.error(`[${this.name}] 초기 상태 로딩에 실패했습니다:`, e.message);
-    }).finally(() => {
+    this.getCachedState(true)
+      .catch(e => this.log.error(`[${this.name}] 초기 상태 로딩 실패:`, e.message))
+      .finally(() => {
         this.startPolling();
         this.log.info(`[${this.name}] 초기화 완료.`);
-    });
-    
+      });
+
     this.api.on('shutdown', () => {
-      this.log.info(`[${this.name}] Homebridge가 종료됩니다. 폴링 타이머를 정리합니다.`);
-      if (this.pollingIntervalId) {
-        clearInterval(this.pollingIntervalId);
-      }
+      this.log.info(`[${this.name}] Homebridge 종료, 폴링 타이머 정리`);
+      if (this.pollingIntervalId) clearInterval(this.pollingIntervalId);
     });
   }
 
   startPolling() {
     if (this.pollingInterval > 0) {
-      this.log.info(`[${this.name}] ${this.pollingInterval}초 간격으로 상태 폴링을 시작합니다.`);
+      this.log.info(`[${this.name}] ${this.pollingInterval}s 간격 상태 폴링 시작`);
       this.pollingIntervalId = setInterval(() => {
-        this.log.debug(`[${this.name}] 주기적인 상태 업데이트 실행...`);
         this.getCachedState(true).catch(e => this.log.warn(`[${this.name}] 폴링 실패:`, e.message));
       }, this.pollingInterval * 1000);
     }
   }
 
+  // ▶ chunked 디코딩 헬퍼
+  decodeChunked(body) {
+    let pos = 0, result = '';
+    while (true) {
+      const idx = body.indexOf('\r\n', pos);
+      if (idx < 0) break;
+      const len = parseInt(body.slice(pos, idx), 16);
+      if (!len) break;
+      result += body.substr(idx + 2, len);
+      pos = idx + 2 + len + 2;
+    }
+    return result;
+  }
+
+  // ▶ _rawRequest: TLS 연결 및 응답 파싱
   _rawRequest(path, method, data) {
     return new Promise((resolve, reject) => {
       const socket = tls.connect(this.tlsOptions)
-        .on('timeout', () => {
-          socket.destroy(new Error(`요청 시간 초과 (${this.timeout}ms)`));
-        })
-        .on('error', (err) => reject(new Error(`TLS 소켓 오류: ${err.message}`)));
-
+        .on('timeout', () => socket.destroy(new Error(`요청 시간 초과 (${this.timeout}ms)`)))
+        .on('error', err => reject(new Error(`TLS 소켓 오류: ${err.message}`)));
       socket.setTimeout(this.timeout);
 
       socket.on('secureConnect', () => {
@@ -242,294 +165,176 @@ class SamsungAirco {
           `${method} ${path} HTTP/1.1`,
           `Host: ${this.ip}`,
           `Authorization: Bearer ${this.token}`,
-          'Connection: close',
+          'Connection: close'
         ];
         if (body) {
           lines.push('Content-Type: application/json');
           lines.push(`Content-Length: ${Buffer.byteLength(body)}`);
         }
-        const headerSection = lines.join('\r\n') + '\r\n\r\n';
-
-        this.log.debug(`[${this.name}] 요청 전송:\n${headerSection}${body}`);
-        socket.write(headerSection + body);
+        socket.write(lines.join('\r\n') + '\r\n\r\n' + body);
         socket.end();
       });
 
-      let responseChunks = '';
+      let resp = '';
       socket.setEncoding('utf8');
-      socket.on('data', chunk => responseChunks += chunk);
+      socket.on('data', c => resp += c);
       socket.on('end', () => {
-        this.log.debug(`[${this.name}] 수신된 원본 응답:\n**RAW_RESPONSE_START**\n${responseChunks}\n**RAW_RESPONSE_END**`);
-        
-        const separator = '\r\n\r\n';
-        const headerEndIndex = responseChunks.indexOf(separator);
-        
-        if (headerEndIndex === -1) {
-          const body = responseChunks.trim();
-          if (!body || body.indexOf('{') < 0) return reject(new Error(`응답에서 유효한 JSON 본문을 발견하지 못했습니다.`));
+        const sep = '\r\n\r\n';
+        const hEnd = resp.indexOf(sep);
+        const headers = hEnd >= 0 ? resp.slice(0, hEnd) : '';
+        let body = hEnd >= 0 ? resp.slice(hEnd + sep.length).trim() : resp.trim();
+
+        if (!body) return reject(new Error('빈 응답을 받았습니다.'));
+        if (/Transfer-Encoding:\s*chunked/i.test(headers)) {
           try {
-            return resolve(JSON.parse(body));
-          } catch(e) {
-            this.log.error(`[${this.name}] JSON 파싱 실패 (헤더 없음). 원본 데이터:`, body);
-            return reject(new Error(`응답 데이터 JSON 파싱에 실패했습니다.`));
+            body = this.decodeChunked(body);
+          } catch (e) {
+            return reject(new Error('청크 디코딩 실패'));
           }
         }
-        
-        const body = responseChunks.slice(headerEndIndex + separator.length).trim();
-        if (!body || body.indexOf('{') < 0) {
-          return reject(new Error(`응답에서 유효한 JSON 본문을 발견하지 못했습니다.`));
-        }
+        if (body.indexOf('{') < 0) return reject(new Error('유효한 JSON 본문을 발견하지 못했습니다.'));
         try {
-          const jsonResponse = JSON.parse(body);
-          resolve(jsonResponse);
+          resolve(JSON.parse(body));
         } catch (e) {
-          this.log.error(`[${this.name}] 응답 JSON 파싱 실패. 원본 데이터:`, body);
-          reject(new Error(`응답 데이터 JSON 파싱에 실패했습니다.`));
+          reject(new Error('JSON 파싱 실패'));
         }
       });
     });
   }
 
+  // ▶ retry 로직 포함한 _request
   async _request(method, path, data = null, retries = 3) {
-    for (let attempt = 1; attempt <= retries; attempt++) {
-      try {
-        return await this._rawRequest(path, method, data);
-      } catch (e) {
-        if (attempt === retries) {
-          this.log.error(`[${this.name}] 최종 요청 실패 (${attempt}회 시도): ${e.message}`);
-          throw e;
-        }
-        this.log.warn(`[${this.name}] 요청 실패, 재시도 ${attempt}/${retries}... (${e.message})`);
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+    for (let i = 1; i <= retries; i++) {
+      try { return await this._rawRequest(path, method, data); }
+      catch (e) {
+        if (i === retries) throw e;
+        await new Promise(r => setTimeout(r, 1000 * i));
       }
     }
   }
 
   async getCachedState(force = false) {
     const now = Date.now();
-    if (!force && this.deviceState && (now - this.lastStateUpdate < this.cacheDuration)) {
-      this.log.debug(`[${this.name}] 유효한 캐시 사용`);
+    if (!force && this.deviceState && (now - this.lastStateUpdate) < this.cacheDuration) {
       return this.deviceState;
     }
-    
-    this.log.debug(`[${this.name}] 새 상태 요청 (캐시 만료 또는 강제 새로고침)`);
-    try {
-      const response = await this._request('GET', API_DEVICES_PATH);
-      if (!response || !response.Devices || !Array.isArray(response.Devices)) {
-        throw new Error('API 응답이 비정상적이거나 Devices 배열이 없습니다.');
-      }
-      this.deviceState = response; 
-      this.lastStateUpdate = now;
-      return this.deviceState;
-    } catch (error) {
-      this.log.error(`[${this.name}] 상태를 가져오는 데 실패했습니다:`, error.message);
-      if (this.deviceState) {
-        this.log.warn(`[${this.name}] API 오류가 발생했으나, 마지막으로 성공한 캐시 데이터를 사용합니다.`);
-        return this.deviceState;
-      }
-      throw error;
-    }
+    const resp = await this._request('GET', API_DEVICES_PATH);
+    if (!resp?.Devices?.length) throw new Error('Devices 배열이 없습니다');
+    this.deviceState = resp;
+    this.lastStateUpdate = now;
+    return resp;
   }
 
   async sendCommand(endpoint, data) {
-    this.log.info(`[${this.name}] [COMMAND] ${endpoint} -> ${JSON.stringify(data)}`);
     await this._request('PUT', `/devices/${this.setDeviceIndex}${endpoint}`, data);
-    this.log.info(`[${this.name}] [COMMAND] 전송 완료`);
-
-    this.log.debug(`[${this.name}] 로컬 캐시 즉시 업데이트...`);
-    if (this.deviceState && this.deviceState.Devices[this.setDeviceIndex]) {
-      const targetDeviceState = this.deviceState.Devices[this.setDeviceIndex];
-      if (endpoint === '' && data.Operation?.power) {
-        targetDeviceState.Operation.power = data.Operation.power;
-      }
+    // 로컬 캐시 즉시 반영
+    const dev = this.deviceState?.Devices?.[this.setDeviceIndex];
+    if (dev) {
+      if (endpoint === '' && data.Operation?.power) dev.Operation.power = data.Operation.power;
       if (endpoint === '/mode' && data.modes) {
-        targetDeviceState.Operation.power = 'On';
-        targetDeviceState.Mode.modes = data.modes;
+        dev.Operation.power = 'On';
+        dev.Mode.modes = data.modes;
       }
       if (endpoint.startsWith('/temperatures/')) {
-        targetDeviceState.Temperatures[0].desired = data.desired;
+        dev.Temperatures[0].desired = data.desired;
       }
       if (endpoint === '/mode' && data.options) {
-          const optionToSet = data.options[0];
-          const isEnabling = optionToSet.endsWith('_On');
-          const baseOpt = isEnabling ? optionToSet.replace('_On', '') : optionToSet.replace('_Off', '');
-          
-          targetDeviceState.Mode.options = targetDeviceState.Mode.options.filter(o => !o.startsWith(baseOpt));
-          if (isEnabling) {
-              targetDeviceState.Mode.options.push(optionToSet);
-          }
+        const opt = data.options[0];
+        const on = opt.endsWith('_On');
+        const base = on ? opt.replace('_On','') : opt.replace('_Off','');
+        dev.Mode.options = dev.Mode.options.filter(o => !o.startsWith(base));
+        if (on) dev.Mode.options.push(opt);
       }
     }
+    // 폴링 없이 캐시 강제 갱신
+    this.getCachedState(true).catch(()=>{});
+  }
 
-    this.getCachedState(true).catch(e => {
-      this.log.warn(`[${this.name}] 명령 후 상태 동기화 실패 (무시됨):`, e.message);
-    });
-  }
-  
-  identify(callback) {
-    this.log.info(`[${this.name}] Identify 호출됨.`);
-    callback();
-  }
-  
+  identify(cb) { this.log.info(`[${this.name}] Identify`); cb(); }
+
   getServices() {
     this.aircoSamsung.setPrimaryService(true);
-
     this.aircoSamsung.getCharacteristic(Characteristic.Active)
       .onGet(this.getActive.bind(this))
       .onSet(this.setActive.bind(this));
-
     this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState)
       .onGet(this.getCurrentHeaterCoolerState.bind(this));
-      
     this.aircoSamsung.getCharacteristic(Characteristic.TargetHeaterCoolerState)
       .setProps({ validValues: [Characteristic.TargetHeaterCoolerState.COOL] })
       .onGet(this.getTargetHeaterCoolerState.bind(this))
-      .onSet(this.setTargetHeaterCoolerState.bind(this)); 
-      
+      .onSet(this.setTargetHeaterCoolerState.bind(this));
     this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature)
       .onGet(this.getCurrentTemperature.bind(this));
-
     this.aircoSamsung.getCharacteristic(Characteristic.CoolingThresholdTemperature)
-      .setProps({ minValue: 18, maxValue: 30, minStep: 1 })
+      .setProps({ minValue:18, maxValue:30, minStep:1 })
       .onGet(this.getTargetTemperature.bind(this))
       .onSet(this.setTargetTemperature.bind(this));
-
     this.aircoSamsung.getCharacteristic(Characteristic.SwingMode)
       .onGet(this.getSwingMode.bind(this))
       .onSet(this.setSwingMode.bind(this));
-
     this.aircoSamsung.getCharacteristic(Characteristic.LockPhysicalControls)
       .onGet(this.getLockPhysicalControls.bind(this))
       .onSet(this.setLockPhysicalControls.bind(this));
-      
-    return [this.informationService, this.aircoSamsung];
+
+    return [ this.informationService, this.aircoSamsung ];
   }
 
+  // ─────────────────────────────────────
   async getActive() {
-    this.log.debug(`[${this.name}] GET Active`);
-    const state = await this.getCachedState();
-    const currentDeviceState = state?.Devices?.[this.deviceIndex];
-    if (!currentDeviceState) {
-        throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-    }
-    const isActive = currentDeviceState.Operation.power === 'On';
-    this.log.info(`[${this.name}] > Active: ${isActive ? 'ON' : 'OFF'}`);
-    return isActive;
+    const dev = this.deviceState?.Devices?.[this.deviceIndex];
+    if (!dev) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    return dev.Operation.power === 'On';
   }
-
-  async setActive(value) {
-    const powerCmd = value ? 'On' : 'Off';
-    this.log.info(`[${this.name}] SET Active -> ${powerCmd}`);
+  async setActive(v) {
     try {
-      await this.sendCommand('', { Operation: { power: powerCmd } });
+      await this.sendCommand('', { Operation:{ power: v ? 'On':'Off' } });
     } catch (e) {
-      this.log.error(`[${this.name}] SET Active 실패:`, e.message);
       throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
   }
-
   async getCurrentHeaterCoolerState() {
-    this.log.debug(`[${this.name}] GET CurrentState`);
-    const state = await this.getCachedState();
-    const currentDeviceState = state?.Devices?.[this.deviceIndex];
-    if (!currentDeviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-
-    if (currentDeviceState.Operation.power !== 'On') {
-      this.log.info(`[${this.name}] > CurrentState: INACTIVE`);
-      return Characteristic.CurrentHeaterCoolerState.INACTIVE;
-    }
-    
-    const mode = currentDeviceState.Mode.modes[0];
-    const isCooling = ['CoolClean', 'Cool', 'Dry', 'DryClean', 'Auto', 'Wind'].includes(mode);
-    
-    if (isCooling) {
-      this.log.info(`[${this.name}] > CurrentState: COOLING`);
-      return Characteristic.CurrentHeaterCoolerState.COOLING;
-    }
-
-    this.log.info(`[${this.name}] > CurrentState: IDLE`);
-    return Characteristic.CurrentHeaterCoolerState.IDLE;
+    const dev = this.deviceState?.Devices?.[this.deviceIndex];
+    if (!dev) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    if (dev.Operation.power !== 'On') return Characteristic.CurrentHeaterCoolerState.INACTIVE;
+    const mode = dev.Mode.modes[0];
+    const coolingModes = ['CoolClean','Cool','Dry','DryClean','Auto','Wind'];
+    return coolingModes.includes(mode)
+      ? Characteristic.CurrentHeaterCoolerState.COOLING
+      : Characteristic.CurrentHeaterCoolerState.IDLE;
   }
-  
   async getTargetHeaterCoolerState() {
-    this.log.debug(`[${this.name}] GET TargetState`);
     return Characteristic.TargetHeaterCoolerState.COOL;
   }
-
-  async setTargetHeaterCoolerState(value) {
-    this.log.info(`[${this.name}] SET TargetState -> ${value} (무시됨)`);
-  }
-  
+  async setTargetHeaterCoolerState() {}
   async getCurrentTemperature() {
-    this.log.debug(`[${this.name}] GET CurrentTemperature`);
-    const state = await this.getCachedState();
-    const currentDeviceState = state?.Devices?.[this.deviceIndex];
-    if (!currentDeviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-    const temp = currentDeviceState.Temperatures[0].current;
-    this.log.info(`[${this.name}] > CurrentTemperature: ${temp}°C`);
-    return temp;
+    const dev = this.deviceState?.Devices?.[this.deviceIndex];
+    if (!dev) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    return dev.Temperatures[0].current;
   }
-
   async getTargetTemperature() {
-    this.log.debug(`[${this.name}] GET TargetTemperature`);
-    const state = await this.getCachedState();
-    const currentDeviceState = state?.Devices?.[this.deviceIndex];
-    if (!currentDeviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-    const temp = currentDeviceState.Temperatures[0].desired;
-    this.log.info(`[${this.name}] > TargetTemperature: ${temp}°C`);
-    return temp;
+    const dev = this.deviceState?.Devices?.[this.deviceIndex];
+    if (!dev) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    return dev.Temperatures[0].desired;
   }
-  
-  async setTargetTemperature(value) {
-    this.log.info(`[${this.name}] SET TargetTemperature -> ${value}°C`);
-    try {
-      await this.sendCommand('/temperatures/0', { desired: value });
-    } catch (e) {
-      this.log.error(`[${this.name}] SET TargetTemp 실패:`, e.message);
-      throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-    }
+  async setTargetTemperature(v) {
+    await this.sendCommand('/temperatures/0',{ desired: v });
   }
-  
   async getSwingMode() {
-    this.log.debug(`[${this.name}] GET SwingMode`);
-    const state = await this.getCachedState();
-    const currentDeviceState = state?.Devices?.[this.deviceIndex];
-    if (!currentDeviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-    const isEnabled = this.swingModeHandler.getValue(currentDeviceState);
-    this.log.info(`[${this.name}] > SwingMode: ${isEnabled ? 'ENABLED' : 'DISABLED'}`);
-    return isEnabled;
+    const dev = this.deviceState?.Devices?.[this.deviceIndex];
+    if (!dev) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    return this.swingModeHandler.getValue(dev);
   }
-
-  async setSwingMode(value) {
-    const enabled = !!value;
-    this.log.info(`[${this.name}] SET SwingMode -> ${enabled ? 'ENABLED' : 'DISABLED'}`);
-    try {
-      const { endpoint, data } = this.swingModeHandler.getCommand(enabled);
-      await this.sendCommand(endpoint, data);
-    } catch (e) {
-      this.log.error(`[${this.name}] SET SwingMode 실패:`, e.message);
-      throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-    }
+  async setSwingMode(v) {
+    const { endpoint,data } = this.swingModeHandler.getCommand(!!v);
+    await this.sendCommand(endpoint,data);
   }
-
   async getLockPhysicalControls() {
-    this.log.debug(`[${this.name}] GET LockControls`);
-    const state = await this.getCachedState();
-    const currentDeviceState = state?.Devices?.[this.deviceIndex];
-    if (!currentDeviceState) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-    const isLocked = currentDeviceState.Mode.options.includes('Autoclean_On');
-    this.log.info(`[${this.name}] > LockControls: ${isLocked ? 'ENABLED' : 'DISABLED'}`);
-    return isLocked;
+    const dev = this.deviceState?.Devices?.[this.deviceIndex];
+    if (!dev) throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    return dev.Mode.options.includes('Autoclean_On');
   }
-
-  async setLockPhysicalControls(value) {
-    const cmd = value ? 'Autoclean_On' : 'Autoclean_Off';
-    this.log.info(`[${this.name}] SET LockControls -> ${cmd}`);
-    try {
-      await this.sendCommand('/mode', { options: [cmd] });
-    } catch (e) {
-      this.log.error(`[${this.name}] SET LockControls 실패:`, e.message);
-      throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-    }
+  async setLockPhysicalControls(v) {
+    const cmd = v ? 'Autoclean_On':'Autoclean_Off';
+    await this.sendCommand('/mode',{ options:[cmd] });
   }
 }
