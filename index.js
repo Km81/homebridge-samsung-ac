@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.9.4 (Final Compatibility Patch for modern Node.js)
+// Version 1.9.5 (State Handler Logic Hotfix)
 'use strict';
 
 const tls = require('tls');
@@ -11,11 +11,9 @@ let Service, Characteristic;
 
 const API_PORT = 8888;
 const API_DEVICES_PATH = '/devices';
-const PLUGIN_VERSION = '1.9.4';
+const PLUGIN_VERSION = '1.9.5'; // 버전 업데이트
 
-/**
- * 스윙 모드(컴포트/무풍)를 처리하는 헬퍼 클래스
- */
+// (SwingModeHandler 등 다른 부분은 변경 없음)
 class SwingModeHandler {
   constructor(type) { this.type = type; }
   getValue(state) {
@@ -40,9 +38,6 @@ module.exports = function(homebridge) {
   homebridge.registerAccessory('homebridge-samsung-ac', 'SamsungAC', SamsungAirco);
 };
 
-/**
- * 삼성 에어컨 액세서리 클래스
- */
 class SamsungAirco {
   constructor(log, config) {
     this.log = log;
@@ -70,19 +65,16 @@ class SamsungAirco {
       throw new Error(`[${this.name}] 인증서/키 파일 접근 오류: ${e.message}`);
     }
 
-    // --- TLS 호환성을 위한 핵심 설정 객체 ---
-    // 최신 Node.js 환경에서 구형 TLSv1 에어컨과 통신하기 위한 모든 옵션을 여기에 정의합니다.
     this.tlsOptions = {
       host: this.ip,
       port: API_PORT,
       cert: fs.readFileSync(this.certPath),
       key: fs.readFileSync(this.keyPath),
-      rejectUnauthorized: false, // 사설 인증서 허용
-      honorCipherOrder: true,    // 서버(에어컨)가 제안하는 암호화 방식 순서 존중
-      ciphers: 'DEFAULT@SECLEVEL=0', // 보안 레벨을 낮춰 오래된 암호화 방식 허용
-      minVersion: 'TLSv1',         // 최소 TLS 버전을 1.0으로 고정
-      maxVersion: 'TLSv1',         // 최대 TLS 버전을 1.0으로 고정
-      // 'ca md too weak' 오류를 해결하기 위한 핵심 옵션. 레거시 서버 연결 허용.
+      rejectUnauthorized: false,
+      honorCipherOrder: true,
+      ciphers: 'DEFAULT@SECLEVEL=0',
+      minVersion: 'TLSv1',
+      maxVersion: 'TLSv1',
       secureOptions: constants.SSL_OP_LEGACY_SERVER_CONNECT,
     };
 
@@ -100,6 +92,7 @@ class SamsungAirco {
     this.log.info(`[${this.name}] Samsung AC Plugin v${PLUGIN_VERSION} 초기화 완료 (레거시 호환 모드)`);
   }
 
+  // ... startPolling, _rawRequest, _request, getCachedState, sendCommand, identify 함수는 변경 없음 ...
   startPolling() {
     if (this.pollingInterval > 0) {
       this.log.info(`[${this.name}] ${this.pollingInterval}초 간격으로 상태 폴링을 시작합니다.`);
@@ -110,24 +103,14 @@ class SamsungAirco {
     }
   }
 
-  /**
-   * Node.js의 HTTP 파서를 우회하고 저수준 TLS 소켓을 통해 직접 통신합니다.
-   * 비표준 HTTP 응답을 보내는 구형 장비와의 호환성을 위해 이 방법을 사용합니다.
-   * @param {string} path - 요청 경로 (예: /devices)
-   * @param {string} method - HTTP 메소드 (예: GET, PUT)
-   * @param {object} data - 전송할 데이터 (PUT 요청 시)
-   * @returns {Promise<object>} - 파싱된 JSON 응답
-   */
   _rawRequest(path, method, data) {
     return new Promise((resolve, reject) => {
       const socket = tls.connect(this.tlsOptions, () => {
-        // HTTP/1.0 형식의 헤더를 수동으로 작성합니다.
-        // 'Connection: close' 헤더는 'Parse Error'를 방지하는 데 매우 중요합니다.
         const requestData = [
           `${method} ${path} HTTP/1.0`,
           `Authorization: Bearer ${this.token}`,
           'Connection: close',
-          '\r\n' // 헤더의 끝을 알리는 빈 줄
+          '\r\n'
         ].join('\r\n');
         
         socket.write(requestData);
@@ -142,8 +125,6 @@ class SamsungAirco {
         responseChunks += chunk;
       });
       socket.on('end', () => {
-        // 에어컨이 보내는 응답에서 HTTP 헤더 부분을 무시하고,
-        // 첫 번째 '{' 문자부터 시작하는 JSON 데이터만 찾아서 파싱합니다.
         const jsonStartIndex = responseChunks.indexOf('{');
         if (jsonStartIndex < 0) {
           return reject(new Error(`응답에서 유효한 JSON을 찾지 못했습니다. 응답 내용: ${responseChunks}`));
@@ -183,8 +164,11 @@ class SamsungAirco {
   async getCachedState(force = false) {
     const now = Date.now();
     if (!force && this.deviceState && (now - this.lastStateUpdate < this.cacheDuration)) {
+      this.log.debug(`[${this.name}] 유효한 캐시 사용`);
       return this.deviceState;
     }
+    
+    this.log.debug(`[${this.name}] 새 상태 요청`);
     const response = await this._request('GET', API_DEVICES_PATH);
     if (!response || !response.Devices || !Array.isArray(response.Devices) || !response.Devices[this.deviceIndex]) {
       throw new Error(`API 응답에서 장치(index: ${this.deviceIndex})를 찾을 수 없습니다.`);
@@ -195,9 +179,11 @@ class SamsungAirco {
   }
 
   async sendCommand(endpoint, data) {
+    this.log.info(`[${this.name}] [COMMAND] ${endpoint} -> ${JSON.stringify(data)}`);
     await this._request('PUT', `/devices/${this.setDeviceIndex}${endpoint}`, data);
-    this.deviceState = null; // 명령 전송 후 캐시 무효화
-    await this.getCachedState(true); // 즉시 상태 갱신
+    this.log.info(`[${this.name}] [COMMAND] 전송 완료`);
+    this.deviceState = null;
+    await this.getCachedState(true);
   }
 
   identify(callback) {
@@ -214,10 +200,14 @@ class SamsungAirco {
 
     this.aircoSamsung.getCharacteristic(Characteristic.CurrentHeaterCoolerState)
       .onGet(this.getCurrentHeaterCoolerState.bind(this));
-
+    
+    // --- ▼▼▼ TargetHeaterCoolerState의 setProps 수정 ▼▼▼ ---
     this.aircoSamsung.getCharacteristic(Characteristic.TargetHeaterCoolerState)
+      // .onSet 핸들러를 추가하여 사용자가 모드를 변경하려고 시도할 때 로그를 남기고,
+      // 값은 항상 COOL로 유지되도록 합니다.
       .setProps({ validValues: [Characteristic.TargetHeaterCoolerState.COOL] })
-      .onGet(this.getTargetHeaterCoolerState.bind(this));
+      .onGet(this.getTargetHeaterCoolerState.bind(this))
+      .onSet(this.setTargetHeaterCoolerState.bind(this)); 
       
     this.aircoSamsung.getCharacteristic(Characteristic.CurrentTemperature)
       .onGet(this.getCurrentTemperature.bind(this));
@@ -238,110 +228,156 @@ class SamsungAirco {
     return [this.informationService, this.aircoSamsung];
   }
 
-  // --- Characteristic Handlers ---
-  // 가독성을 위해 표준 async/await 및 try/catch 형태로 정리
+  // --- ▼▼▼ Characteristic Handlers 로직 수정 ▼▼▼ ---
   
   async getActive() {
+    this.log.info(`[${this.name}] GET Active`);
     try {
       const state = await this.getCachedState();
-      return state.Operation.power === 'On' ? 1 : 0;
+      const isActive = state.Operation.power === 'On';
+      this.log.info(`[${this.name}] > Active: ${isActive ? 'ON' : 'OFF'}`);
+      return isActive ? 1 : 0;
     } catch (e) {
-      this.log.error(`[${this.name}] Active 상태 GET 오류:`, e.message);
+      this.log.error(`[${this.name}] GET Active 오류:`, e.message);
       throw e;
     }
   }
 
   async setActive(value) {
+    const powerCmd = value ? 'On' : 'Off';
+    this.log.info(`[${this.name}] SET Active -> ${powerCmd}`);
     try {
-      const powerCmd = value ? 'On' : 'Off';
       await this.sendCommand('', { Operation: { power: powerCmd } });
+      this.log.info(`[${this.name}] SET Active 완료`);
     } catch (e) {
-      this.log.error(`[${this.name}] Active 상태 SET 오류:`, e.message);
+      this.log.error(`[${this.name}] SET Active 오류:`, e.message);
       throw e;
     }
   }
 
   async getCurrentHeaterCoolerState() {
+    this.log.info(`[${this.name}] GET CurrentState`);
     try {
       const state = await this.getCachedState();
+      // 전원이 꺼져있으면 INACTIVE(0) 반환
+      if (state.Operation.power !== 'On') {
+        this.log.info(`[${this.name}] > CurrentState: INACTIVE (꺼짐)`);
+        return Characteristic.CurrentHeaterCoolerState.INACTIVE;
+      }
+      
       const mode = state.Mode.modes[0];
       const isCooling = ['CoolClean', 'Cool', 'Dry', 'DryClean', 'Auto', 'Wind'].includes(mode);
-      return isCooling ? Characteristic.CurrentHeaterCoolerState.COOLING : Characteristic.CurrentHeaterCoolerState.IDLE;
+      // 이 플러그인은 냉방/제습 모드만 지원하므로, 전원이 켜져있고 냉방 관련 모드이면 COOLING(3) 반환
+      if (isCooling) {
+          this.log.info(`[${this.name}] > CurrentState: COOLING`);
+          return Characteristic.CurrentHeaterCoolerState.COOLING;
+      }
+      // 그 외의 경우 (송풍 등)는 IDLE(1)로 처리
+      this.log.info(`[${this.name}] > CurrentState: IDLE`);
+      return Characteristic.CurrentHeaterCoolerState.IDLE;
     } catch (e) {
-      this.log.error(`[${this.name}] CurrentState GET 오류:`, e.message);
+      this.log.error(`[${this.name}] GET CurrentState 오류:`, e.message);
       throw e;
     }
   }
   
   async getTargetHeaterCoolerState() {
-    return this.getCurrentHeaterCoolerState();
+    this.log.info(`[${this.name}] GET TargetState`);
+    // 목표 상태는 이 플러그인에서 항상 COOL(2)로 고정입니다.
+    this.log.info(`[${this.name}] > TargetState: COOL`);
+    return Characteristic.TargetHeaterCoolerState.COOL;
+  }
+
+  async setTargetHeaterCoolerState(value) {
+    this.log.info(`[${this.name}] SET TargetState -> ${value}`);
+    // 이 플러그인은 COOL 모드만 지원하므로, 사용자가 다른 값으로 변경 시도 시 무시하고 로그만 남김
+    this.log.info(`[${this.name}] > COOL 모드만 지원하므로 실제 변경은 하지 않음.`);
   }
   
   async getCurrentTemperature() {
+    this.log.info(`[${this.name}] GET CurrentTemperature`);
     try {
       const state = await this.getCachedState();
-      return state.Temperatures[0].current;
+      const temp = state.Temperatures[0].current;
+      this.log.info(`[${this.name}] > CurrentTemperature: ${temp}°C`);
+      return temp;
     } catch (e) {
-      this.log.error(`[${this.name}] CurrentTemp GET 오류:`, e.message);
+      this.log.error(`[${this.name}] GET CurrentTemp 오류:`, e.message);
       throw e;
     }
   }
 
   async getTargetTemperature() {
+    this.log.info(`[${this.name}] GET TargetTemperature`);
     try {
       const state = await this.getCachedState();
-      return state.Temperatures[0].desired;
+      const temp = state.Temperatures[0].desired;
+      this.log.info(`[${this.name}] > TargetTemperature: ${temp}°C`);
+      return temp;
     } catch (e) {
-      this.log.error(`[${this.name}] TargetTemp GET 오류:`, e.message);
+      this.log.error(`[${this.name}] GET TargetTemp 오류:`, e.message);
       throw e;
     }
   }
   
   async setTargetTemperature(value) {
+    this.log.info(`[${this.name}] SET TargetTemperature -> ${value}°C`);
     try {
       await this.sendCommand('/temperatures/0', { desired: value });
+      this.log.info(`[${this.name}] SET TargetTemperature 완료`);
     } catch (e) {
-      this.log.error(`[${this.name}] TargetTemp SET 오류:`, e.message);
+      this.log.error(`[${this.name}] SET TargetTemp 오류:`, e.message);
       throw e;
     }
   }
   
   async getSwingMode() {
+    this.log.info(`[${this.name}] GET SwingMode`);
     try {
       const state = await this.getCachedState();
-      return this.swingModeHandler.getValue(state) ? 1 : 0;
+      const isEnabled = this.swingModeHandler.getValue(state);
+      this.log.info(`[${this.name}] > SwingMode: ${isEnabled ? 'ENABLED' : 'DISABLED'}`);
+      return isEnabled ? 1 : 0;
     } catch (e) {
-      this.log.error(`[${this.name}] SwingMode GET 오류:`, e.message);
+      this.log.error(`[${this.name}] GET SwingMode 오류:`, e.message);
       throw e;
     }
   }
 
   async setSwingMode(value) {
+    const enabled = value === 1;
+    this.log.info(`[${this.name}] SET SwingMode -> ${enabled ? 'ENABLED' : 'DISABLED'}`);
     try {
-      const { endpoint, data } = this.swingModeHandler.getCommand(value);
+      const { endpoint, data } = this.swingModeHandler.getCommand(enabled);
       await this.sendCommand(endpoint, data);
+      this.log.info(`[${this.name}] SET SwingMode 완료`);
     } catch (e) {
-      this.log.error(`[${this.name}] SwingMode SET 오류:`, e.message);
+      this.log.error(`[${this.name}] SET SwingMode 오류:`, e.message);
       throw e;
     }
   }
 
   async getLockPhysicalControls() {
+    this.log.info(`[${this.name}] GET LockControls`);
     try {
       const state = await this.getCachedState();
-      return state.Mode.options.includes('Autoclean_On') ? 1 : 0;
+      const isLocked = state.Mode.options.includes('Autoclean_On');
+      this.log.info(`[${this.name}] > LockControls: ${isLocked ? 'ENABLED' : 'DISABLED'}`);
+      return isLocked ? 1 : 0;
     } catch (e) {
-      this.log.error(`[${this.name}] LockControls GET 오류:`, e.message);
+      this.log.error(`[${this.name}] GET LockControls 오류:`, e.message);
       throw e;
     }
   }
 
   async setLockPhysicalControls(value) {
+    const cmd = value ? 'Autoclean_On' : 'Autoclean_Off';
+    this.log.info(`[${this.name}] SET LockControls -> ${cmd}`);
     try {
-      const cmd = value ? 'Autoclean_On' : 'Autoclean_Off';
       await this.sendCommand('/mode', { options: [cmd] });
+      this.log.info(`[${this.name}] SET LockControls 완료`);
     } catch (e) {
-      this.log.error(`[${this.name}] LockControls SET 오류:`, e.message);
+      this.log.error(`[${this.name}] SET LockControls 오류:`, e.message);
       throw e;
     }
   }
