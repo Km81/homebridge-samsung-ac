@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.9.6 (Final Compatibility Patch for modern Node.js with Embedded Certificate)
+// Version 1.9.7 (Final, with all classes and fixes)
 'use strict';
 
 const tls = require('tls');
@@ -9,7 +9,6 @@ const { constants } = require('crypto');
 let HAP;
 let Service, Characteristic;
 
-// --- ac14k_m.pem 파일의 내용을 코드에 직접 내장 ---
 const defaultCertificate = `
 -----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDeXvhcsqRFWfQt
@@ -125,11 +124,27 @@ KBHcLDDiEU3llprD8FRV3unYrl0F0B2GGdRk
 
 const API_PORT = 8888;
 const API_DEVICES_PATH = '/devices';
-const PLUGIN_VERSION = '1.9.6';
+const PLUGIN_VERSION = '1.9.7';
 
-/**
- * 플러그인을 Homebridge에 등록하는 메인 함수
- */
+// --- ▼▼▼ 누락되었던 SwingModeHandler 클래스를 다시 추가합니다 ▼▼▼ ---
+class SwingModeHandler {
+  constructor(type) { this.type = type; }
+  getValue(state) {
+    if (!state) return false;
+    if (this.type === 'wind') return state.Wind?.direction === 'Up_And_Low';
+    return state.Mode?.options?.includes('Comode_Nano');
+  }
+  getCommand(enable) {
+    if (this.type === 'wind') {
+      const dir = enable ? 'Up_And_Low' : 'Fix';
+      return { endpoint: '/wind', data: { direction: dir } };
+    }
+    const opt = enable ? 'Comode_Nano' : 'Comode_Off';
+    return { endpoint: '/mode', data: { options: [opt] } };
+  }
+}
+// --- ▲▲▲ 여기까지 추가된 부분입니다 ▲▲▲ ---
+
 module.exports = function(homebridge) {
   HAP = homebridge.hap;
   Service = HAP.Service;
@@ -137,15 +152,13 @@ module.exports = function(homebridge) {
   homebridge.registerAccessory('homebridge-samsung-ac', 'SamsungAC', SamsungAirco);
 };
 
-/**
- * 삼성 에어컨 액세서리 클래스
- */
 class SamsungAirco {
   constructor(log, config) {
     this.log = log;
     this.name = config.name;
     this.ip = config.ip;
     this.token = config.token;
+    
     this.deviceIndex = config.deviceIndex || 0;
     this.setDeviceIndex = config.setDeviceIndex ?? this.deviceIndex;
     this.swingModeType = config.swingModeType || 'comfort';
@@ -158,7 +171,6 @@ class SamsungAirco {
       throw new Error(`[${this.name}] 필수 설정(ip, token)이 누락되었습니다.`);
     }
 
-    // TLS 호환성을 위한 핵심 설정 객체
     this.tlsOptions = {
       host: this.ip,
       port: API_PORT,
@@ -186,6 +198,7 @@ class SamsungAirco {
     this.log.info(`[${this.name}] Samsung AC Plugin v${PLUGIN_VERSION} 초기화 완료 (인증서 내장)`);
   }
 
+  // ... 이하 모든 코드는 이전과 동일합니다 ...
   startPolling() {
     if (this.pollingInterval > 0) {
       this.log.info(`[${this.name}] ${this.pollingInterval}초 간격으로 상태 폴링을 시작합니다.`);
