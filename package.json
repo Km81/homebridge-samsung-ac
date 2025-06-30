@@ -1,6 +1,6 @@
 {
   "name": "homebridge-samsung-ac",
-  "version": "1.9.10",
+  "version": "1.9.11",
   "description": "A Homebridge plugin for older Samsung air conditioners (TLSv1) with an embedded certificate, compatible with modern Node.js.",
   "main": "index.js",
   "author": "Km81",
