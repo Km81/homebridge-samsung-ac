@@ -1,9 +1,8 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.9.7 (Final, with all classes and fixes)
+// Version 1.9.8 (Final Polished Version)
 'use strict';
 
 const tls = require('tls');
-const fs = require('fs');
 const { constants } = require('crypto');
 
 let HAP;
@@ -124,9 +123,8 @@ KBHcLDDiEU3llprD8FRV3unYrl0F0B2GGdRk
 
 const API_PORT = 8888;
 const API_DEVICES_PATH = '/devices';
-const PLUGIN_VERSION = '1.9.7';
+const PLUGIN_VERSION = '1.9.8';
 
-// --- ▼▼▼ 누락되었던 SwingModeHandler 클래스를 다시 추가합니다 ▼▼▼ ---
 class SwingModeHandler {
   constructor(type) { this.type = type; }
   getValue(state) {
@@ -143,7 +141,6 @@ class SwingModeHandler {
     return { endpoint: '/mode', data: { options: [opt] } };
   }
 }
-// --- ▲▲▲ 여기까지 추가된 부분입니다 ▲▲▲ ---
 
 module.exports = function(homebridge) {
   HAP = homebridge.hap;
@@ -153,8 +150,10 @@ module.exports = function(homebridge) {
 };
 
 class SamsungAirco {
-  constructor(log, config) {
+  constructor(log, config, api) {
     this.log = log;
+    this.config = config;
+    this.api = api;
     this.name = config.name;
     this.ip = config.ip;
     this.token = config.token;
@@ -165,6 +164,7 @@ class SamsungAirco {
     this.cacheDuration = config.cacheDuration || 30000;
     this.timeout = config.timeout || 5000;
     this.pollingInterval = config.pollingInterval;
+    this.pollingIntervalId = null; 
     this.swingModeHandler = new SwingModeHandler(this.swingModeType);
 
     if (!this.ip || !this.token) {
@@ -195,14 +195,21 @@ class SamsungAirco {
       .setCharacteristic(Characteristic.FirmwareRevision, PLUGIN_VERSION);
 
     this.startPolling();
+
+    this.api.on('shutdown', () => {
+      this.log.info(`[${this.name}] Homebridge가 종료됩니다. 폴링 타이머를 정리합니다.`);
+      if (this.pollingIntervalId) {
+        clearInterval(this.pollingIntervalId);
+      }
+    });
+
     this.log.info(`[${this.name}] Samsung AC Plugin v${PLUGIN_VERSION} 초기화 완료 (인증서 내장)`);
   }
 
-  // ... 이하 모든 코드는 이전과 동일합니다 ...
   startPolling() {
     if (this.pollingInterval > 0) {
       this.log.info(`[${this.name}] ${this.pollingInterval}초 간격으로 상태 폴링을 시작합니다.`);
-      setInterval(() => {
+      this.pollingIntervalId = setInterval(() => {
         this.log.debug(`[${this.name}] 주기적인 상태 업데이트 실행...`);
         this.getCachedState(true).catch(e => this.log.error(`[${this.name}] 폴링 실패:`, e.message));
       }, this.pollingInterval * 1000);
@@ -233,13 +240,13 @@ class SamsungAirco {
       socket.on('end', () => {
         const jsonStartIndex = responseChunks.indexOf('{');
         if (jsonStartIndex < 0) {
-          return reject(new Error(`응답에서 유효한 JSON을 찾지 못했습니다. 응답 내용: ${responseChunks}`));
+          return reject(new Error(`에어컨으로부터 유효한 JSON 응답을 받지 못했습니다.`));
         }
         try {
           const jsonResponse = JSON.parse(responseChunks.slice(jsonStartIndex));
           resolve(jsonResponse);
         } catch (e) {
-          reject(new Error(`JSON 파싱에 실패했습니다: ${e.message}`));
+          reject(new Error(`응답 데이터 JSON 파싱에 실패했습니다: ${e.message}`));
         }
       });
       socket.on('timeout', () => {
@@ -285,9 +292,9 @@ class SamsungAirco {
   }
 
   async sendCommand(endpoint, data) {
-    this.log.info(`[${this.name}] [COMMAND] ${endpoint} -> ${JSON.stringify(data)}`);
+    this.log.debug(`[${this.name}] [COMMAND] ${endpoint} -> ${JSON.stringify(data)}`);
     await this._request('PUT', `/devices/${this.setDeviceIndex}${endpoint}`, data);
-    this.log.info(`[${this.name}] [COMMAND] 전송 완료`);
+    this.log.info(`[${this.name}] [COMMAND] 전송 완료: ${endpoint}`);
     this.deviceState = null;
     await this.getCachedState(true);
   }
@@ -334,7 +341,7 @@ class SamsungAirco {
   // --- Characteristic Handlers ---
   
   async getActive() {
-    this.log.info(`[${this.name}] GET Active`);
+    this.log.debug(`[${this.name}] GET Active`);
     try {
       const state = await this.getCachedState();
       const isActive = state.Operation.power === 'On';
@@ -351,7 +358,6 @@ class SamsungAirco {
     this.log.info(`[${this.name}] SET Active -> ${powerCmd}`);
     try {
       await this.sendCommand('', { Operation: { power: powerCmd } });
-      this.log.info(`[${this.name}] SET Active 완료`);
     } catch (e) {
       this.log.error(`[${this.name}] SET Active 오류:`, e.message);
       throw e;
@@ -359,7 +365,7 @@ class SamsungAirco {
   }
 
   async getCurrentHeaterCoolerState() {
-    this.log.info(`[${this.name}] GET CurrentState`);
+    this.log.debug(`[${this.name}] GET CurrentState`);
     try {
       const state = await this.getCachedState();
       if (state.Operation.power !== 'On') {
@@ -382,18 +388,19 @@ class SamsungAirco {
   }
   
   async getTargetHeaterCoolerState() {
-    this.log.info(`[${this.name}] GET TargetState`);
+    this.log.debug(`[${this.name}] GET TargetState`);
+    const value = Characteristic.TargetHeaterCoolerState.COOL;
     this.log.info(`[${this.name}] > TargetState: COOL`);
-    return Characteristic.TargetHeaterCoolerState.COOL;
+    return value;
   }
 
   async setTargetHeaterCoolerState(value) {
     this.log.info(`[${this.name}] SET TargetState -> ${value} (무시됨)`);
-    this.log.info(`[${this.name}] > COOL 모드만 지원하므로 실제 변경은 하지 않음.`);
+    // 이 플러그인은 COOL 모드만 지원하므로, 사용자가 다른 값으로 변경 시도 시 무시하고 로그만 남김.
   }
   
   async getCurrentTemperature() {
-    this.log.info(`[${this.name}] GET CurrentTemperature`);
+    this.log.debug(`[${this.name}] GET CurrentTemperature`);
     try {
       const state = await this.getCachedState();
       const temp = state.Temperatures[0].current;
@@ -406,7 +413,7 @@ class SamsungAirco {
   }
 
   async getTargetTemperature() {
-    this.log.info(`[${this.name}] GET TargetTemperature`);
+    this.log.debug(`[${this.name}] GET TargetTemperature`);
     try {
       const state = await this.getCachedState();
       const temp = state.Temperatures[0].desired;
@@ -422,7 +429,6 @@ class SamsungAirco {
     this.log.info(`[${this.name}] SET TargetTemperature -> ${value}°C`);
     try {
       await this.sendCommand('/temperatures/0', { desired: value });
-      this.log.info(`[${this.name}] SET TargetTemperature 완료`);
     } catch (e) {
       this.log.error(`[${this.name}] SET TargetTemp 오류:`, e.message);
       throw e;
@@ -430,7 +436,7 @@ class SamsungAirco {
   }
   
   async getSwingMode() {
-    this.log.info(`[${this.name}] GET SwingMode`);
+    this.log.debug(`[${this.name}] GET SwingMode`);
     try {
       const state = await this.getCachedState();
       const isEnabled = this.swingModeHandler.getValue(state);
@@ -448,7 +454,6 @@ class SamsungAirco {
     try {
       const { endpoint, data } = this.swingModeHandler.getCommand(enabled);
       await this.sendCommand(endpoint, data);
-      this.log.info(`[${this.name}] SET SwingMode 완료`);
     } catch (e) {
       this.log.error(`[${this.name}] SET SwingMode 오류:`, e.message);
       throw e;
@@ -456,7 +461,7 @@ class SamsungAirco {
   }
 
   async getLockPhysicalControls() {
-    this.log.info(`[${this.name}] GET LockControls`);
+    this.log.debug(`[${this.name}] GET LockControls`);
     try {
       const state = await this.getCachedState();
       const isLocked = state.Mode.options.includes('Autoclean_On');
@@ -473,7 +478,6 @@ class SamsungAirco {
     this.log.info(`[${this.name}] SET LockControls -> ${cmd}`);
     try {
       await this.sendCommand('/mode', { options: [cmd] });
-      this.log.info(`[${this.name}] SET LockControls 완료`);
     } catch (e) {
       this.log.error(`[${this.name}] SET LockControls 오류:`, e.message);
       throw e;
