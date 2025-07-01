@@ -30,24 +30,24 @@
         "description": "API 응답에서 상태를 읽어올 장치의 인덱스입니다 (0부터 시작)."
       },
       "setDeviceIndex": {
-        "title": "장치 인덱스 (쓰기, 선택 사항)",
+        "title": "장치 인덱스 (쓰기)",
         "type": "integer",
         "description": "명령을 보낼 장치의 인덱스입니다. 비워두면 '읽기' 인덱스와 동일하게 설정됩니다."
       },
       "swingModeType": {
-        "title": "스윙 모드 타입",
+        "title": "스윙(회전) 모드 타입",
         "type": "string",
         "default": "comfort",
         "oneOf": [
-          { "title": "컴포트 (Comode_Nano)", "enum": ["comfort"] },
-          { "title": "상하 회전 (Wind)", "enum": ["wind"] }
+          { "title": "컴포트 모드 (바람세기 자동 조절)", "enum": ["comfort"] },
+          { "title": "상하 회전 (바람 방향만 조절)", "enum": ["wind"] }
         ],
         "description": "스윙(회전) 기능을 어떤 명령어로 제어할지 선택합니다."
       },
       "pollingInterval": {
         "title": "상태 폴링 간격 (초)",
         "type": "integer",
-        "description": "리모컨 등 외부에서 상태 변경 시 동기화할 시간 간격입니다. 0 또는 비워두면 비활성화됩니다."
+        "description": "리모컨 등 외부에서 상태 변경 시 동기화할 시간 간격(초)입니다. 0 또는 비워두면 비활성화됩니다."
       },
       "timeout": {
         "title": "요청 시간 초과 (ms)",
@@ -60,13 +60,31 @@
         "type": "integer",
         "default": 30000,
         "description": "가져온 상태 정보를 재사용할 시간입니다 (1000 = 1초)."
+      },
+      "manufacturer": {
+          "title": "제조사",
+          "type": "string",
+          "default": "Samsung",
+          "description": "홈 앱에 표시될 제조사 이름입니다."
+      },
+      "model": {
+          "title": "모델명",
+          "type": "string",
+          "default": "AC-Model-01",
+          "description": "홈 앱에 표시될 모델명입니다."
+      },
+      "serialNumber": {
+          "title": "시리얼 번호",
+          "type": "string",
+          "default": "A1-SERIAL-01",
+          "description": "홈 앱에 표시될 시리얼 번호입니다."
       }
     }
   },
   "layout": [
     {
       "type": "help",
-      "help": "이 플러그인은 TLSv1을 사용하는 구형 삼성 에어컨을 위한 것입니다. 인증서가 내장되어 있어 별도의 파일 설정이 필요 없습니다."
+      "help": "이 플러그인은 TLSv1을 사용하는 구형 삼성 에어컨을 위한 것입니다. 인증서가 내장되어 IP와 토큰만으로 간편하게 설정할 수 있습니다."
     },
     "name",
     "ip",
@@ -77,6 +95,7 @@
     {
       "type": "fieldset",
       "title": "고급 설정",
+      "expandable": true,
       "items": [
         "deviceIndex",
         "setDeviceIndex",
@@ -84,6 +103,16 @@
         "pollingInterval",
         "timeout",
         "cacheDuration"
+      ]
+    },
+    {
+      "type": "fieldset",
+      "title": "액세서리 정보 (선택 사항)",
+      "expandable": true,
+      "items": [
+        "manufacturer",
+        "model",
+        "serialNumber"
       ]
     }
   ]
