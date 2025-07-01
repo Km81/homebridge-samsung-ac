@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.9.30 (Refactored & Stabilized)
+// Version 2.0.0 (Refactored & Stabilized)
 'use strict';
 
 const tls = require('tls');
@@ -13,7 +13,7 @@ let Service, Characteristic;
 const CONSTANTS = {
     API_PORT: 8888,
     API_DEVICES_PATH: '/devices',
-    PLUGIN_VERSION: '1.9.30',
+    PLUGIN_VERSION: '2.0.0',
     DEFAULT_RETRY_ATTEMPTS: 3,
     DEFAULT_CACHE_DURATION_MS: 30000,
     DEFAULT_TIMEOUT_MS: 5000,
