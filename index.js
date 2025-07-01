@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 1.9.28 (Refactored)
+// Version 1.9.3 (Refactored & Stabilized)
 'use strict';
 
 const tls = require('tls');
@@ -13,7 +13,7 @@ let Service, Characteristic;
 const CONSTANTS = {
     API_PORT: 8888,
     API_DEVICES_PATH: '/devices',
-    PLUGIN_VERSION: '1.9.28',
+    PLUGIN_VERSION: '1.9.3',
     DEFAULT_RETRY_ATTEMPTS: 3,
     DEFAULT_CACHE_DURATION_MS: 30000,
     DEFAULT_TIMEOUT_MS: 5000,
@@ -131,7 +131,7 @@ class SamsungAirco {
         }
     }
 
-    // --- 통신 로직 (항목 3은 제외하여 기존 코드 유지) ---
+    // --- 통신 로직 (✨ _rawRequest 함수 개선 적용) ---
     _rawRequest(path, method, data) {
         return new Promise((resolve, reject) => {
             const jsonData = data ? JSON.stringify(data) : '';
@@ -153,31 +153,58 @@ class SamsungAirco {
             let responseChunks = '';
             socket.setEncoding('utf8');
             socket.on('data', chunk => { responseChunks += chunk; });
+
             socket.on('end', () => {
-                const statusLine = responseChunks.split('\r\n')[0];
-                const statusMatch = statusLine.match(/^HTTP\/\d\.\d\s+(\d+)/);
-                const statusCode = statusMatch ? parseInt(statusMatch[1]) : null;
-
-                if (statusCode === 204) return resolve({});
-
-                const jsonStartIndex = responseChunks.indexOf('{');
-                if (jsonStartIndex < 0) {
-                    return reject(new Error(`응답에서 유효한 JSON을 찾지 못했습니다. 응답: ${responseChunks}`));
-                }
                 try {
-                    const jsonResponse = JSON.parse(responseChunks.slice(jsonStartIndex));
-                    resolve(jsonResponse);
+                    const statusLine = responseChunks.split('\r\n')[0];
+                    const statusMatch = statusLine.match(/^HTTP\/\d\.\d\s+(\d+)/);
+                    const statusCode = statusMatch ? parseInt(statusMatch[1], 10) : null;
+                    
+                    if (statusCode === 204) {
+                        return resolve({});
+                    }
+
+                    // [개선 1] HTTP 헤더와 본문을 정확히 분리
+                    const bodySeparator = '\r\n\r\n';
+                    const bodyIndex = responseChunks.indexOf(bodySeparator);
+
+                    if (bodyIndex === -1) {
+                        return reject(new Error(`HTTP 본문 구분자(\\r\\n\\r\\n)를 찾을 수 없습니다.`));
+                    }
+                    
+                    const body = responseChunks.slice(bodyIndex + bodySeparator.length).trim();
+
+                    if (!body) { // 본문이 비어있는 경우
+                        return resolve({});
+                    }
+
+                    try {
+                        const jsonResponse = JSON.parse(body);
+                        resolve(jsonResponse);
+                    } catch (e) {
+                        reject(new Error(`JSON 파싱에 실패했습니다. Body: "${body}", Error: ${e.message}`));
+                    }
                 } catch (e) {
-                    reject(new Error(`JSON 파싱에 실패했습니다: ${e.message}`));
+                    reject(e); // 처리 중 발생한 예외
+                } finally {
+                    // [개선 2] 소켓 리소스 확실히 정리
+                    if (!socket.destroyed) {
+                        socket.destroy();
+                    }
                 }
             });
-
+            
+            socket.setTimeout(this.timeout); // Promise 외부에서 타임아웃 설정
+            
             socket.on('timeout', () => {
                 socket.destroy();
-                reject(new Error('요청 시간 초과'));
+                reject(new Error(`요청 시간 초과 (${this.timeout}ms)`));
             });
 
             socket.on('error', (err) => {
+                if (!socket.destroyed) {
+                    socket.destroy();
+                }
                 reject(new Error(`TLS 소켓 오류: ${err.message}`));
             });
         });
@@ -232,7 +259,6 @@ class SamsungAirco {
     }
 
     // --- 코드 중복 제거 및 추상화 ---
-    // GET 핸들러를 생성하는 헬퍼 함수
     _createGetter(name, extractor) {
         return async () => {
             this.log.debug(`[${this.name}] GET ${name}`);
@@ -248,7 +274,6 @@ class SamsungAirco {
         };
     }
 
-    // SET 핸들러를 생성하는 헬퍼 함수
     _createSetter(name, commandBuilder) {
         return async (value) => {
             this.log.info(`[${this.name}] SET ${name} -> ${value}`);
