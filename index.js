@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 2.0.17 (Multi-Device Platform Model)
+// Version 2.0.18 (Multi-Device Platform Model)
 'use strict';
 
 const tls = require('tls');
