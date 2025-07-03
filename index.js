@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 2.0.10
+// Version 2.0.13 (Simplified 1-Device-Per-Platform Model)
 'use strict';
 
 const tls = require('tls');
@@ -9,12 +9,12 @@ const { constants } = require('crypto');
 let HAP;
 
 const PLUGIN_NAME = 'homebridge-samsung-ac';
-const PLATFORM_NAME = 'SamsungACPlatform';
+const PLATFORM_NAME = 'SamsungAC';
 
 const CONSTANTS = {
     API_PORT: 8888,
     API_DEVICES_PATH: '/devices',
-    PLUGIN_VERSION: '2.0.7',
+    PLUGIN_VERSION: '2.0.13',
     DEFAULT_RETRY_ATTEMPTS: 3,
     DEFAULT_CACHE_DURATION_MS: 30000,
     DEFAULT_TIMEOUT_MS: 5000,
@@ -24,23 +24,6 @@ const CONSTANTS = {
     AUTOCLEAN: { ON: 'Autoclean_On', OFF: 'Autoclean_Off' },
     MODE: { COOL: 'Cool', DRY: 'Dry', WIND: 'Wind', AUTO: 'Auto' }
 };
-
-class SwingModeHandler {
-    constructor(type) { this.type = type; }
-    getValue(state) {
-        if (!state) return false;
-        if (this.type === 'wind') return state.Wind?.direction === CONSTANTS.SWING.UP_DOWN;
-        return state.Mode?.options?.includes(CONSTANTS.COMFORT.NANO_ON);
-    }
-    getCommand(enable) {
-        if (this.type === 'wind') {
-            const dir = enable ? CONSTANTS.SWING.UP_DOWN : CONSTANTS.SWING.FIX;
-            return { endpoint: '/wind', data: { direction: dir } };
-        }
-        const opt = enable ? CONSTANTS.COMFORT.NANO_ON : CONSTANTS.COMFORT.NANO_OFF;
-        return { endpoint: '/mode', data: { options: [opt] } };
-    }
-}
 
 class ApiClient {
     constructor(ip, token, log, options) {
@@ -104,6 +87,48 @@ class ApiClient {
                 reject(new Error(`TLS 소켓 오류: ${err.message}`));
             });
         });
+    }
+}
+
+class SamsungACPlatform {
+    constructor(log, config, api) {
+        this.log = log;
+        this.config = config;
+        this.api = api;
+        this.accessory = null;
+
+        this.log.info(`[${this.config.name}] 삼성 AC 플랫폼을 초기화합니다...`);
+        this.api.on('didFinishLaunching', () => this.setupDevice());
+    }
+
+    configureAccessory(accessory) {
+        this.log.info(`[${accessory.displayName}] 캐시에서 액세서리를 복원합니다.`);
+        this.accessory = accessory;
+    }
+
+    setupDevice() {
+        if (!this.config.name || !this.config.ip || !this.config.token) {
+            this.log.warn('잘못된 에어컨 설정이 있어 건너뜁니다. (name, ip, token 필요)', this.config);
+            return;
+        }
+
+        const uuid = HAP.uuid.generate(this.config.ip + this.config.name);
+        
+        if (this.accessory && this.accessory.UUID === uuid) {
+            this.log.info(`[${this.config.name}] 기존 액세서리를 업데이트하고 로직을 연결합니다.`);
+            this.accessory.context.config = this.config;
+            this.api.updatePlatformAccessories([this.accessory]);
+        } else {
+            if (this.accessory) {
+                this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.accessory]);
+            }
+            this.log.info(`[${this.config.name}] 새로운 액세서리를 등록합니다.`);
+            this.accessory = new this.api.platformAccessory(this.config.name, uuid);
+            this.accessory.context.config = this.config;
+            this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.accessory]);
+        }
+        
+        new SamsungACLogic(this.log, this.config, this.api, this.accessory);
     }
 }
 
@@ -248,67 +273,6 @@ class SamsungACLogic {
         this.aircoService.getCharacteristic(this.Characteristic.LockPhysicalControls)
             .onGet(this._createGetter('LockControls', state => state.Mode.options.includes(CONSTANTS.AUTOCLEAN.ON) ? 1 : 0))
             .onSet(this._createSetter('LockControls', value => ({ endpoint: '/mode', data: { options: [value ? CONSTANTS.AUTOCLEAN.ON : CONSTANTS.AUTOCLEAN.OFF] } })));
-    }
-}
-
-class SamsungACPlatform {
-    constructor(log, config, api) {
-        this.log = log;
-        this.config = config;
-        this.api = api;
-        this.cachedAccessories = new Map();
-
-        this.log.info("삼성 AC 플랫폼을 초기화합니다...");
-        this.api.on('didFinishLaunching', () => this.discoverDevices());
-    }
-
-    configureAccessory(accessory) {
-        this.log.info(`캐시에서 '${accessory.displayName}' 액세서리를 불러옵니다.`);
-        this.cachedAccessories.set(accessory.UUID, accessory);
-    }
-
-    discoverDevices() {
-        const configuredAccessories = this.config.accessories || [];
-        const activeUUIDs = new Set();
-        
-        this.log.info(`${configuredAccessories.length}개의 에어컨 장치를 설정에서 찾았습니다.`);
-
-        for (const accessoryConfig of configuredAccessories) {
-            if (!accessoryConfig.name || !accessoryConfig.ip || !accessoryConfig.token) {
-                this.log.warn('잘못된 에어컨 설정이 있어 건너뜁니다. (name, ip, token 필요)', accessoryConfig);
-                continue;
-            }
-
-            const uuid = HAP.uuid.generate(accessoryConfig.ip + accessoryConfig.name);
-            activeUUIDs.add(uuid);
-
-            const existingAccessory = this.cachedAccessories.get(uuid);
-
-            if (existingAccessory) {
-                this.log.info(`'${accessoryConfig.name}' 액세서리를 복원하고 로직을 연결합니다.`);
-                existingAccessory.context.config = accessoryConfig;
-                this.api.updatePlatformAccessories([existingAccessory]);
-                new SamsungACLogic(this.log, accessoryConfig, this.api, existingAccessory);
-            } else {
-                this.log.info(`'${accessoryConfig.name}'를 새로운 액세서리로 등록합니다.`);
-                const accessory = new this.api.platformAccessory(accessoryConfig.name, uuid);
-                accessory.context.config = accessoryConfig;
-                new SamsungACLogic(this.log, accessoryConfig, this.api, accessory);
-                this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
-            }
-        }
-        
-        const accessoriesToRemove = [];
-        for (const accessory of this.cachedAccessories.values()) {
-            if (!activeUUIDs.has(accessory.UUID)) {
-                accessoriesToRemove.push(accessory);
-            }
-        }
-
-        if (accessoriesToRemove.length > 0) {
-            this.log.info(`${accessoriesToRemove.length}개의 오래된 액세서리를 제거합니다.`);
-            this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, accessoriesToRemove);
-        }
     }
 }
 
