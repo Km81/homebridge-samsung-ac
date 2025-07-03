@@ -4,7 +4,7 @@
 
 이 플러그인은 최신 Node.js(v17 이상) 환경에서 발생하는 TLS 호환성 문제를 해결하기 위한 패치를 포함하고 있습니다. 또한, **인증서가 플러그인에 내장**되어 있어 사용자는 더 이상 `.pem` 파일을 직접 구하거나 경로를 설정할 필요 없이, 오직 **IP 주소와 토큰만으로** 플러그인을 설정할 수 있습니다.
 
-**플랫폼(Platform)** 방식으로 전환되어, 불안정한 에어컨 장치를 **자식 브릿지(Child Bridge)**에 격리하여 홈브릿지 전체의 안정성을 확보할 수 있습니다.
+**플랫폼(Platform)** 방식으로 구성되어, 불안정한 에어컨 장치를 **자식 브릿지(Child Bridge)**에 격리하여 홈브릿지 전체의 안정성을 확보할 수 있습니다.
 
 ## 주요 기능 ✨
 
@@ -147,7 +147,7 @@ Homebridge UI의 '플러그인' 탭에서 `homebridge-samsung-ac`을 검색하�
 
 ## 설정 ⚙️
 
-Homebridge UI의 플러그인 설정 화면에서 '에어컨 추가' 버튼을 눌러 각 장치를 설정합니다.
+이 플러그인은 **에어컨 한 대당 하나의 플랫폼 설정**을 추가하는 방식으로 동작합니다. Homebridge UI의 설정 화면에서 각 에어컨의 정보를 직접 입력하거나, 아래 `config.json` 예시를 참고하여 직접 수정할 수 있습니다.
 
 | 키 | 설명 | 기본값 | 필수 |
 | :--- | :--- | :--- | :--- |
@@ -165,9 +165,11 @@ Homebridge UI의 플러그인 설정 화면에서 '에어컨 추가' 버튼을 �
 | `maxTemp` | 설정 가능한 최고 온도 (°C) | `30` | 아니오 |
 | `manufacturer`| 홈 앱에 표시될 제조사 이름 | `Samsung` | 아니오 |
 | `model`| 홈 앱에 표시될 모델명 | `AC-Model` | 아니오 |
-| `serialNumber`| 홈 앱에 표시될 시리얼 번호 | `(이름과 동일)`| 아니오 |
+| `serialNumber`| 홈 앱에 표시될 시리얼 번호 | `(name과 동일)`| 아니오 |
 
 #### `config.json` 직접 수정 예시
+
+`platforms` 배열 안에, **에어컨 대수만큼** 아래와 같은 블록을 추가합니다.
 
 ```json
 {
@@ -176,25 +178,22 @@ Homebridge UI의 플러그인 설정 화면에서 '에어컨 추가' 버튼을 �
   },
   "platforms": [
     {
-      "platform": "SamsungACPlatform",
-      "name": "Samsung ACs",
-      "accessories": [
-        {
-          "name": "거실 에어컨",
-          "ip": "192.168.1.50",
-          "token": "YOUR-EXTRACTED-TOKEN-HERE",
-          "pollingInterval": 30,
-          "debug": false,
-          "minTemp": 18,
-          "maxTemp": 30
-        },
-        {
-          "name": "침실 에어컨",
-          "ip": "192.168.1.51",
-          "token": "ANOTHER-TOKEN-HERE",
-          "pollingInterval": 30
-        }
-      ]
+      "platform": "SamsungAC",
+      "name": "거실 에어컨",
+      "ip": "192.168.1.50",
+      "token": "TOKEN_FOR_LIVING_ROOM_AC",
+      "pollingInterval": 30,
+      "deviceIndex": 1,
+      "setDeviceIndex": 0
+    },
+    {
+      "platform": "SamsungAC",
+      "name": "침실 에어컨",
+      "ip": "192.168.1.51",
+      "token": "TOKEN_FOR_BEDROOM_AC",
+      "pollingInterval": 30,
+      "deviceIndex": 0,
+      "setDeviceIndex": 1
     }
   ]
 }
@@ -212,6 +211,8 @@ Homebridge UI의 플러그인 설정 화면에서 '에어컨 추가' 버튼을 �
 자식 브릿지로 실행: '별도의 자식 브릿지에서 실행(Run in a separate Child Bridge)' 옵션을 켭니다.
 
 저장 및 재시작: 설정을 **저장(Save)**하고, 홈브릿지를 재시작하면 완료됩니다.
+
+팁: 여러 대의 에어컨을 설정한 경우, 각 설정 블록마다 '브릿지 설정'이 나타납니다. 모든 에어컨을 하나의 동일한 자식 브릿지에 포함시켜 관리하는 것이 편리합니다.
 
 ⚠️ 보안 경고
 이 플러그인은 오래된 보안 프로토콜(TLSv1)을 사용하여 에어컨과 통신합니다. 신뢰할 수 있는 로컬 네트워크 환경에서만 사용하시는 것을 강력히 권장합니다.
