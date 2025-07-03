@@ -1,6 +1,6 @@
 {
   "name": "homebridge-samsung-ac",
-  "version": "2.0.13",
+  "version": "2.0.14",
   "description": "A Homebridge platform plugin for older Samsung air conditioners (TLSv1), supporting stable child bridge operation.",
   "main": "index.js",
   "author": "Km81",
