@@ -1,20 +1,20 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 2.0.14 (Complete code with class definition fix)
+// Version 2.2.0 (Final Accessory Version)
 'use strict';
 
 const tls = require('tls');
 const fs = require('fs');
 const { constants } = require('crypto');
 
-let HAP;
+let Service, Characteristic;
 
 const PLUGIN_NAME = 'homebridge-samsung-ac';
-const PLATFORM_NAME = 'SamsungAC';
+const ACCESSORY_NAME = 'SamsungAC';
 
 const CONSTANTS = {
     API_PORT: 8888,
     API_DEVICES_PATH: '/devices',
-    PLUGIN_VERSION: '2.0.14',
+    PLUGIN_VERSION: '2.2.0',
     DEFAULT_RETRY_ATTEMPTS: 3,
     DEFAULT_CACHE_DURATION_MS: 30000,
     DEFAULT_TIMEOUT_MS: 5000,
@@ -107,55 +107,11 @@ class ApiClient {
     }
 }
 
-class SamsungACPlatform {
-    constructor(log, config, api) {
+class SamsungAC {
+    constructor(log, config) {
         this.log = log;
         this.config = config;
-        this.api = api;
-        this.accessory = null;
-
-        this.log.info(`[${this.config.name}] 삼성 AC 플랫폼을 초기화합니다...`);
-        this.api.on('didFinishLaunching', () => this.setupDevice());
-    }
-
-    configureAccessory(accessory) {
-        this.log.info(`[${accessory.displayName}] 캐시에서 액세서리를 복원합니다.`);
-        this.accessory = accessory;
-    }
-
-    setupDevice() {
-        if (!this.config.name || !this.config.ip || !this.config.token) {
-            this.log.warn('잘못된 에어컨 설정이 있어 건너뜁니다. (name, ip, token 필요)', this.config);
-            return;
-        }
-
-        const uuid = HAP.uuid.generate(this.config.ip + this.config.name);
         
-        if (this.accessory && this.accessory.UUID === uuid) {
-            this.log.info(`[${this.config.name}] 기존 액세서리를 업데이트하고 로직을 연결합니다.`);
-            this.accessory.context.config = this.config;
-            this.api.updatePlatformAccessories([this.accessory]);
-        } else {
-            if (this.accessory) {
-                this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.accessory]);
-            }
-            this.log.info(`[${this.config.name}] 새로운 액세서리를 등록합니다.`);
-            this.accessory = new this.api.platformAccessory(this.config.name, uuid);
-            this.accessory.context.config = this.config;
-            this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [this.accessory]);
-        }
-        
-        new SamsungACLogic(this.log, this.config, this.api, this.accessory);
-    }
-}
-
-class SamsungACLogic {
-    constructor(log, config, api, accessory) {
-        this.log = log;
-        this.config = config;
-        this.accessory = accessory;
-        this.Service = api.hap.Service;
-        this.Characteristic = api.hap.Characteristic;
         this.name = this.config.name;
         this.deviceIndex = this.config.deviceIndex ?? 0;
         this.setDeviceIndex = this.config.setDeviceIndex ?? this.deviceIndex;
@@ -185,17 +141,23 @@ class SamsungACLogic {
         this.deviceState = null;
         this.lastStateUpdate = 0;
         this.stateRequestPromise = null;
-        this.aircoService = this.accessory.getService(this.Service.HeaterCooler) || this.accessory.addService(this.Service.HeaterCooler, this.name);
-        this.accessory.getService(this.Service.AccessoryInformation)
-            .setCharacteristic(this.Characteristic.Manufacturer, this.config.manufacturer || 'Samsung')
-            .setCharacteristic(this.Characteristic.Model, this.config.model || 'AC-Model')
-            .setCharacteristic(this.Characteristic.SerialNumber, this.config.serialNumber || this.name)
-            .setCharacteristic(this.Characteristic.FirmwareRevision, CONSTANTS.PLUGIN_VERSION);
+        
+        this.aircoService = new Service.HeaterCooler(this.name);
+        this.informationService = new Service.AccessoryInformation()
+            .setCharacteristic(Characteristic.Manufacturer, this.config.manufacturer || 'Samsung')
+            .setCharacteristic(Characteristic.Model, this.config.model || 'AC-Model')
+            .setCharacteristic(Characteristic.SerialNumber, this.config.serialNumber || this.name)
+            .setCharacteristic(Characteristic.FirmwareRevision, CONSTANTS.PLUGIN_VERSION);
+            
         this.setupCharacteristics();
         this.startPolling();
         this.log.info(`[${this.name}] 초기화 완료.`);
     }
 
+    getServices() {
+        return [this.informationService, this.aircoService];
+    }
+    
     debugLog(message) { if (this.debugMode) this.log.info(`[${this.name}] ${message}`); }
 
     startPolling() {
@@ -263,37 +225,32 @@ class SamsungACLogic {
     }
     
     setupCharacteristics() {
-        this.aircoService.getCharacteristic(this.Characteristic.Active)
+        this.aircoService.getCharacteristic(Characteristic.Active)
             .onGet(this._createGetter('Active', state => state.Operation.power === CONSTANTS.POWER.ON ? 1 : 0))
             .onSet(this._createSetter('Active', value => ({ endpoint: '', data: { Operation: { power: value ? CONSTANTS.POWER.ON : CONSTANTS.POWER.OFF } } })));
-
-        this.aircoService.getCharacteristic(this.Characteristic.CurrentHeaterCoolerState)
-            .onGet(this._createGetter('CurrentState', state => state.Operation.power !== CONSTANTS.POWER.ON ? this.Characteristic.CurrentHeaterCoolerState.INACTIVE : this.Characteristic.CurrentHeaterCoolerState.COOLING));
-
-        this.aircoService.getCharacteristic(this.Characteristic.TargetHeaterCoolerState)
-            .setProps({ validValues: [this.Characteristic.TargetHeaterCoolerState.COOL] })
-            .onGet(this._createGetter('TargetState', () => this.Characteristic.TargetHeaterCoolerState.COOL))
+        this.aircoService.getCharacteristic(Characteristic.CurrentHeaterCoolerState)
+            .onGet(this._createGetter('CurrentState', state => state.Operation.power !== CONSTANTS.POWER.ON ? Characteristic.CurrentHeaterCoolerState.INACTIVE : Characteristic.CurrentHeaterCoolerState.COOLING));
+        this.aircoService.getCharacteristic(Characteristic.TargetHeaterCoolerState)
+            .setProps({ validValues: [Characteristic.TargetHeaterCoolerState.COOL] })
+            .onGet(this._createGetter('TargetState', () => Characteristic.TargetHeaterCoolerState.COOL))
             .onSet(value => this.log.info(`[${this.name}] SET TargetState -> ${value} (COOL 모드만 지원)`));
-
-        this.aircoService.getCharacteristic(this.Characteristic.CurrentTemperature)
+        this.aircoService.getCharacteristic(Characteristic.CurrentTemperature)
             .onGet(this._createGetter('CurrentTemp', state => state.Temperatures[0].current));
-            
-        this.aircoService.getCharacteristic(this.Characteristic.CoolingThresholdTemperature)
+        this.aircoService.getCharacteristic(Characteristic.CoolingThresholdTemperature)
             .setProps({ minValue: this.minTemp, maxValue: this.maxTemp, minStep: 1 })
             .onGet(this._createGetter('TargetTemp', state => state.Temperatures[0].desired))
             .onSet(this._createSetter('TargetTemp', value => ({ endpoint: '/temperatures/0', data: { desired: value } })));
-
-        this.aircoService.getCharacteristic(this.Characteristic.SwingMode)
+        this.aircoService.getCharacteristic(Characteristic.SwingMode)
             .onGet(this._createGetter('SwingMode', state => this.swingModeHandler.getValue(state) ? 1 : 0))
             .onSet(this._createSetter('SwingMode', value => this.swingModeHandler.getCommand(value === 1)));
-
-        this.aircoService.getCharacteristic(this.Characteristic.LockPhysicalControls)
+        this.aircoService.getCharacteristic(Characteristic.LockPhysicalControls)
             .onGet(this._createGetter('LockControls', state => state.Mode.options.includes(CONSTANTS.AUTOCLEAN.ON) ? 1 : 0))
             .onSet(this._createSetter('LockControls', value => ({ endpoint: '/mode', data: { options: [value ? CONSTANTS.AUTOCLEAN.ON : CONSTANTS.AUTOCLEAN.OFF] } })));
     }
 }
 
 module.exports = (homebridge) => {
-    HAP = homebridge.hap;
-    homebridge.registerPlatform(PLUGIN_NAME, PLATFORM_NAME, SamsungACPlatform);
+    Service = homebridge.hap.Service;
+    Characteristic = homebridge.hap.Characteristic;
+    homebridge.registerAccessory(PLUGIN_NAME, ACCESSORY_NAME, SamsungAC);
 };
