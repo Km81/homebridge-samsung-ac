@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 2.2.0 (Final Accessory Version)
+// Version 2.0.15 (Final Accessory Version)
 'use strict';
 
 const tls = require('tls');
@@ -14,7 +14,7 @@ const ACCESSORY_NAME = 'SamsungAC';
 const CONSTANTS = {
     API_PORT: 8888,
     API_DEVICES_PATH: '/devices',
-    PLUGIN_VERSION: '2.2.0',
+    PLUGIN_VERSION: '2.0.15',
     DEFAULT_RETRY_ATTEMPTS: 3,
     DEFAULT_CACHE_DURATION_MS: 30000,
     DEFAULT_TIMEOUT_MS: 5000,
