@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 2.0.0 (Refactored & Stabilized)
+// Version 2.0.1 (Refactored & Stabilized with Request Coalescing)
 'use strict';
 
 const tls = require('tls');
@@ -13,7 +13,7 @@ let Service, Characteristic;
 const CONSTANTS = {
     API_PORT: 8888,
     API_DEVICES_PATH: '/devices',
-    PLUGIN_VERSION: '2.0.0',
+    PLUGIN_VERSION: '2.0.1', // 버전 업데이트
     DEFAULT_RETRY_ATTEMPTS: 3,
     DEFAULT_CACHE_DURATION_MS: 30000,
     DEFAULT_TIMEOUT_MS: 5000,
@@ -109,6 +109,7 @@ class SamsungAirco {
 
         this.deviceState = null;
         this.lastStateUpdate = 0;
+        this.stateRequestPromise = null; // ✨ API 요청 병합을 위한 Promise 저장 변수
 
         this.aircoSamsung = new Service.HeaterCooler(this.name);
         this.informationService = new Service.AccessoryInformation()
@@ -225,21 +226,42 @@ class SamsungAirco {
         }
     }
 
+    // ✨✨✨ API 호출 병합 로직이 적용된 getCachedState 함수 ✨✨✨
     async getCachedState(force = false) {
         const now = Date.now();
+        // 1. 캐시가 유효하면 즉시 반환
         if (!force && this.deviceState && (now - this.lastStateUpdate < this.cacheDuration)) {
             this.log.debug(`[${this.name}] 캐시된 상태 사용`);
             return this.deviceState;
         }
 
-        this.log.debug(`[${this.name}] 장치에서 새 상태를 가져옵니다.`);
-        const response = await this._request('GET', CONSTANTS.API_DEVICES_PATH);
-        if (!response?.Devices?.[this.deviceIndex]) {
-            throw new Error(`API 응답에서 장치(index: ${this.deviceIndex})를 찾을 수 없습니다.`);
+        // 2. 이미 진행 중인 요청이 있는지 확인 (핵심 개선점)
+        if (this.stateRequestPromise) {
+            this.log.debug(`[${this.name}] 진행 중인 상태 업데이트 요청에 합류합니다.`);
+            return await this.stateRequestPromise;
         }
-        this.deviceState = response.Devices[this.deviceIndex];
-        this.lastStateUpdate = now;
-        return this.deviceState;
+
+        // 3. 새로운 요청 시작 및 Promise 저장
+        this.log.debug(`[${this.name}] 장치에서 새 상태를 가져옵니다 (강제갱신: ${force}).`);
+        this.stateRequestPromise = (async () => {
+            try {
+                const response = await this._request('GET', CONSTANTS.API_DEVICES_PATH);
+                if (!response?.Devices?.[this.deviceIndex]) {
+                    throw new Error(`API 응답에서 장치(index: ${this.deviceIndex})를 찾을 수 없습니다.`);
+                }
+                this.deviceState = response.Devices[this.deviceIndex];
+                this.lastStateUpdate = Date.now();
+                return this.deviceState;
+            } catch (e) {
+                this.log.error(`[${this.name}] 상태를 가져오는 중 오류 발생: ${e.message}`);
+                throw e;
+            } finally {
+                // 4. 요청이 완료되면 Promise 참조를 제거
+                this.stateRequestPromise = null;
+            }
+        })();
+
+        return await this.stateRequestPromise;
     }
 
     async sendCommand(endpoint, data) {
@@ -248,7 +270,7 @@ class SamsungAirco {
         this.log.info(`[${this.name}] 명령 전송 완료.`);
         
         // 상태 즉시 갱신
-        this.deviceState = null; 
+        this.deviceState = null;
         await new Promise(resolve => setTimeout(resolve, 500)); // 기기 반영 시간 대기
         await this.getCachedState(true);
     }
