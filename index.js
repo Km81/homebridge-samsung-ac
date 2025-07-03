@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 2.0.3 (Converted to Platform with Feature Enhancements)
+// Version 2.0.4 (Fixed certificate path issue)
 'use strict';
 
 const tls = require('tls');
@@ -14,7 +14,7 @@ const PLATFORM_NAME = 'SamsungACPlatform';
 const CONSTANTS = {
     API_PORT: 8888,
     API_DEVICES_PATH: '/devices',
-    PLUGIN_VERSION: '2.0.3',
+    PLUGIN_VERSION: '2.0.4',
     DEFAULT_RETRY_ATTEMPTS: 3,
     DEFAULT_CACHE_DURATION_MS: 30000,
     DEFAULT_TIMEOUT_MS: 5000,
@@ -25,19 +25,11 @@ const CONSTANTS = {
     MODE: { COOL: 'Cool', DRY: 'Dry', WIND: 'Wind', AUTO: 'Auto' }
 };
 
-// =========================================================================
-// === 클래스 정의 (오류 수정을 위해 순서 조정) ===
-// =========================================================================
-
 class SwingModeHandler {
-    constructor(type) {
-        this.type = type;
-    }
+    constructor(type) { this.type = type; }
     getValue(state) {
         if (!state) return false;
-        if (this.type === 'wind') {
-            return state.Wind?.direction === CONSTANTS.SWING.UP_DOWN;
-        }
+        if (this.type === 'wind') return state.Wind?.direction === CONSTANTS.SWING.UP_DOWN;
         return state.Mode?.options?.includes(CONSTANTS.COMFORT.NANO_ON);
     }
     getCommand(enable) {
@@ -56,29 +48,16 @@ class ApiClient {
         this.token = token;
         this.log = log;
         this.timeout = options.timeout;
-
         this.tlsOptions = {
-            host: this.ip,
-            port: CONSTANTS.API_PORT,
-            cert: fs.readFileSync(options.certPath),
-            key: fs.readFileSync(options.keyPath),
-            rejectUnauthorized: false,
-            honorCipherOrder: true,
-            ciphers: 'DEFAULT@SECLEVEL=0',
-            minVersion: 'TLSv1',
-            maxVersion: 'TLSv1',
+            host: this.ip, port: CONSTANTS.API_PORT,
+            cert: fs.readFileSync(options.certPath), key: fs.readFileSync(options.keyPath),
+            rejectUnauthorized: false, honorCipherOrder: true,
+            ciphers: 'DEFAULT@SECLEVEL=0', minVersion: 'TLSv1', maxVersion: 'TLSv1',
             secureOptions: constants.SSL_OP_LEGACY_SERVER_CONNECT,
         };
     }
-
-    async getDeviceStatus() {
-        return await this._request('GET', CONSTANTS.API_DEVICES_PATH);
-    }
-
-    async sendCommand(index, endpoint, data) {
-        await this._request('PUT', `/devices/${index}${endpoint}`, data);
-    }
-
+    async getDeviceStatus() { return await this._request('GET', CONSTANTS.API_DEVICES_PATH); }
+    async sendCommand(index, endpoint, data) { await this._request('PUT', `/devices/${index}${endpoint}`, data); }
     async _request(method, path, data = null, retries = CONSTANTS.DEFAULT_RETRY_ATTEMPTS) {
         for (let attempt = 1; attempt <= retries; attempt++) {
             try {
@@ -93,32 +72,22 @@ class ApiClient {
             }
         }
     }
-
     _rawRequest(path, method, data) {
         return new Promise((resolve, reject) => {
             const jsonData = data ? JSON.stringify(data) : '';
-            const requestData = [
-                `${method} ${path} HTTP/1.1`, `Host: ${this.ip}`, `Authorization: Bearer ${this.token}`,
-                'Content-Type: application/json', `Content-Length: ${Buffer.byteLength(jsonData)}`,
-                'Connection: close', '', jsonData
-            ].join('\r\n');
-
+            const requestData = [`${method} ${path} HTTP/1.1`, `Host: ${this.ip}`, `Authorization: Bearer ${this.token}`, 'Content-Type: application/json', `Content-Length: ${Buffer.byteLength(jsonData)}`, 'Connection: close', '', jsonData].join('\r\n');
             const socket = tls.connect(this.tlsOptions, () => socket.write(requestData));
-
             let responseChunks = '';
             socket.setEncoding('utf8');
             socket.on('data', chunk => { responseChunks += chunk; });
-
             socket.on('end', () => {
                 try {
                     if (responseChunks.includes('HTTP/1.1 204 No Content')) return resolve({});
                     const bodySeparator = '\r\n\r\n';
                     const bodyIndex = responseChunks.indexOf(bodySeparator);
                     if (bodyIndex === -1) return reject(new Error('HTTP 본문 구분자를 찾을 수 없습니다.'));
-
                     const body = responseChunks.slice(bodyIndex + bodySeparator.length).trim();
                     if (!body) return resolve({});
-
                     resolve(JSON.parse(body));
                 } catch (e) {
                     reject(new Error(`응답 처리 실패: ${e.message}, 응답: "${responseChunks}"`));
@@ -126,12 +95,10 @@ class ApiClient {
                     if (!socket.destroyed) socket.destroy();
                 }
             });
-
             socket.setTimeout(this.timeout, () => {
                 socket.destroy();
                 reject(new Error(`요청 시간 초과 (${this.timeout}ms)`));
             });
-
             socket.on('error', err => {
                 if (!socket.destroyed) socket.destroy();
                 reject(new Error(`TLS 소켓 오류: ${err.message}`));
@@ -147,7 +114,6 @@ class SamsungACLogic {
         this.accessory = accessory;
         this.Service = api.hap.Service;
         this.Characteristic = api.hap.Characteristic;
-
         this.name = this.config.name;
         this.deviceIndex = this.config.deviceIndex ?? 0;
         this.setDeviceIndex = this.config.setDeviceIndex ?? this.deviceIndex;
@@ -159,28 +125,31 @@ class SamsungACLogic {
         this.maxTemp = this.config.maxTemp ?? 30;
         this.debugMode = this.config.debug === true;
 
-        const defaultCertPath = `${api.user.storagePath()}/cert.pem`;
+        // === 🐞 오류 수정: 인증서 경로를 플러그인 내부 폴더로 지정 ===
+        const defaultCertPath = `${__dirname}/cert/cert.pem`;
         const certPath = this.config.certPath || defaultCertPath;
         const keyPath = this.config.keyPath || certPath;
         
-        // 이 부분에서 오류가 발생했었습니다. SwingModeHandler가 먼저 정의되어야 합니다.
+        try {
+            if (!fs.existsSync(certPath)) {
+                 throw new Error(`인증서 파일을 찾을 수 없습니다: ${certPath}. cert 폴더와 cert.pem 파일이 플러그인 디렉토리 내에 있는지 확인하세요.`);
+            }
+        } catch (e) {
+            this.log.error(e.message);
+            return;
+        }
+        
         this.swingModeHandler = new SwingModeHandler(this.swingModeType);
-
-        this.client = new ApiClient(this.config.ip, this.config.token, this.log, {
-            timeout: this.timeout, certPath, keyPath
-        });
-
+        this.client = new ApiClient(this.config.ip, this.config.token, this.log, { timeout: this.timeout, certPath, keyPath });
         this.deviceState = null;
         this.lastStateUpdate = 0;
         this.stateRequestPromise = null;
-
         this.aircoService = this.accessory.getService(this.Service.HeaterCooler) || this.accessory.addService(this.Service.HeaterCooler, this.name);
         this.accessory.getService(this.Service.AccessoryInformation)
             .setCharacteristic(this.Characteristic.Manufacturer, this.config.manufacturer || 'Samsung')
             .setCharacteristic(this.Characteristic.Model, this.config.model || 'AC-Model')
             .setCharacteristic(this.Characteristic.SerialNumber, this.config.serialNumber || this.name)
             .setCharacteristic(this.Characteristic.FirmwareRevision, CONSTANTS.PLUGIN_VERSION);
-
         this.setupCharacteristics();
         this.startPolling();
         this.log.info(`[${this.name}] 초기화 완료.`);
@@ -229,7 +198,7 @@ class SamsungACLogic {
         await new Promise(resolve => setTimeout(resolve, 500));
         await this.getCachedState(true);
     }
-
+    
     _createGetter(name, extractor) {
         return async () => {
             this.debugLog(`[${this.name}] GET ${name}`);
@@ -251,17 +220,14 @@ class SamsungACLogic {
             } catch (e) { this.log.error(`[${this.name}] SET ${name} 오류:`, e.message); throw e; }
         };
     }
-
+    
     setupCharacteristics() {
         this.aircoService.getCharacteristic(this.Characteristic.Active)
             .onGet(this._createGetter('Active', state => state.Operation.power === CONSTANTS.POWER.ON ? 1 : 0))
             .onSet(this._createSetter('Active', value => ({ endpoint: '', data: { Operation: { power: value ? CONSTANTS.POWER.ON : CONSTANTS.POWER.OFF } } })));
 
         this.aircoService.getCharacteristic(this.Characteristic.CurrentHeaterCoolerState)
-            .onGet(this._createGetter('CurrentState', state => {
-                if (state.Operation.power !== CONSTANTS.POWER.ON) return this.Characteristic.CurrentHeaterCoolerState.INACTIVE;
-                return this.Characteristic.CurrentHeaterCoolerState.COOLING;
-            }));
+            .onGet(this._createGetter('CurrentState', state => state.Operation.power !== CONSTANTS.POWER.ON ? this.Characteristic.CurrentHeaterCoolerState.INACTIVE : this.Characteristic.CurrentHeaterCoolerState.COOLING));
 
         this.aircoService.getCharacteristic(this.Characteristic.TargetHeaterCoolerState)
             .setProps({ validValues: [this.Characteristic.TargetHeaterCoolerState.COOL] })
@@ -270,7 +236,7 @@ class SamsungACLogic {
 
         this.aircoService.getCharacteristic(this.Characteristic.CurrentTemperature)
             .onGet(this._createGetter('CurrentTemp', state => state.Temperatures[0].current));
-
+            
         this.aircoService.getCharacteristic(this.Characteristic.CoolingThresholdTemperature)
             .setProps({ minValue: this.minTemp, maxValue: this.maxTemp, minStep: 1 })
             .onGet(this._createGetter('TargetTemp', state => state.Temperatures[0].desired))
@@ -317,12 +283,10 @@ class SamsungACPlatform {
 
             if (existingAccessory) {
                 this.log.info(`'${accessoryConfig.name}' 액세서리를 복원하고 로직을 연결합니다.`);
-                existingAccessory.context.config = accessoryConfig;
                 new SamsungACLogic(this.log, accessoryConfig, this.api, existingAccessory);
             } else {
                 this.log.info(`'${accessoryConfig.name}'를 새로운 액세서리로 등록합니다.`);
                 const accessory = new this.api.platformAccessory(accessoryConfig.name, uuid);
-                accessory.context.config = accessoryConfig;
                 new SamsungACLogic(this.log, accessoryConfig, this.api, accessory);
                 this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
             }
