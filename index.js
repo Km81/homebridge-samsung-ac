@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 2.0.8 (Final fix for UI settings restoration)
+// Version 2.0.9 (Final fix for UI settings restoration)
 'use strict';
 
 const tls = require('tls');
