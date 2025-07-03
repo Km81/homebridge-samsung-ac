@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 2.0.13 (Simplified 1-Device-Per-Platform Model)
+// Version 2.0.14 (Complete code with class definition fix)
 'use strict';
 
 const tls = require('tls');
@@ -14,7 +14,7 @@ const PLATFORM_NAME = 'SamsungAC';
 const CONSTANTS = {
     API_PORT: 8888,
     API_DEVICES_PATH: '/devices',
-    PLUGIN_VERSION: '2.0.13',
+    PLUGIN_VERSION: '2.0.14',
     DEFAULT_RETRY_ATTEMPTS: 3,
     DEFAULT_CACHE_DURATION_MS: 30000,
     DEFAULT_TIMEOUT_MS: 5000,
@@ -24,6 +24,23 @@ const CONSTANTS = {
     AUTOCLEAN: { ON: 'Autoclean_On', OFF: 'Autoclean_Off' },
     MODE: { COOL: 'Cool', DRY: 'Dry', WIND: 'Wind', AUTO: 'Auto' }
 };
+
+class SwingModeHandler {
+    constructor(type) { this.type = type; }
+    getValue(state) {
+        if (!state) return false;
+        if (this.type === 'wind') return state.Wind?.direction === CONSTANTS.SWING.UP_DOWN;
+        return state.Mode?.options?.includes(CONSTANTS.COMFORT.NANO_ON);
+    }
+    getCommand(enable) {
+        if (this.type === 'wind') {
+            const dir = enable ? CONSTANTS.SWING.UP_DOWN : CONSTANTS.SWING.FIX;
+            return { endpoint: '/wind', data: { direction: dir } };
+        }
+        const opt = enable ? CONSTANTS.COMFORT.NANO_ON : CONSTANTS.COMFORT.NANO_OFF;
+        return { endpoint: '/mode', data: { options: [opt] } };
+    }
+}
 
 class ApiClient {
     constructor(ip, token, log, options) {
