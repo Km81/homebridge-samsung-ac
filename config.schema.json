@@ -8,15 +8,12 @@
       "name": {
         "title": "플랫폼 이름",
         "type": "string",
-        "default": "삼성 에어컨",
-        "required": true
+        "default": "삼성 에어컨"
       },
       "accessories": {
         "type": "array",
-        "title": "에어컨 장치 목록",
         "items": {
           "type": "object",
-          "required": ["name", "ip", "token"],
           "properties": {
             "name": {
               "title": "액세서리 이름",
@@ -39,8 +36,7 @@
             },
             "setDeviceIndex": {
               "title": "장치 인덱스 (쓰기)",
-              "type": "integer",
-              "default": 0
+              "type": "integer"
             },
             "swingModeType": {
               "title": "스윙(회전) 모드 타입",
@@ -53,8 +49,7 @@
             },
             "pollingInterval": {
               "title": "상태 폴링 간격 (초)",
-              "type": "integer",
-              "default": 10
+              "type": "integer"
             },
             "timeout": {
               "title": "요청 시간 초과 (ms)",
@@ -68,13 +63,11 @@
             },
             "certPath": {
               "title": "인증서 경로",
-              "type": "string",
-              "default": ""
+              "type": "string"
             },
             "keyPath": {
               "title": "키 파일 경로",
-              "type": "string",
-              "default": ""
+              "type": "string"
             },
             "debug": {
               "title": "상세 로그 활성화",
@@ -106,15 +99,23 @@
               "type": "string",
               "default": "A1-SERIAL"
             }
-          }
+          },
+          "required": [
+            "name",
+            "ip",
+            "token"
+          ]
         }
       }
-    }
+    },
+    "required": [
+      "name"
+    ]
   },
   "layout": [
     {
       "type": "help",
-      "help": "이 플러그인은 TLSv1을 사용하는 구형 삼성 에어컨을 위한 것입니다. 버전 2.0.9를 사용하세요."
+      "help": "이 플러그인은 TLSv1을 사용하는 구형 삼성 에어컨을 위한 것입니다. 각 에어컨 장치를 아래 목록에 추가하여 관리할 수 있습니다."
     },
     "name",
     {
@@ -131,7 +132,7 @@
         },
         {
           "type": "fieldset",
-          "title": "인증서 설정",
+          "title": "인증서 설정 (선택 사항)",
           "expandable": true,
           "items": [
             "certPath",
