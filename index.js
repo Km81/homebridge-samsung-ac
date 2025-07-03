@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 2.0.4 (Fixed certificate path issue)
+// Version 2.0.5 (Improved accessory management)
 'use strict';
 
 const tls = require('tls');
@@ -14,7 +14,7 @@ const PLATFORM_NAME = 'SamsungACPlatform';
 const CONSTANTS = {
     API_PORT: 8888,
     API_DEVICES_PATH: '/devices',
-    PLUGIN_VERSION: '2.0.4',
+    PLUGIN_VERSION: '2.0.5',
     DEFAULT_RETRY_ATTEMPTS: 3,
     DEFAULT_CACHE_DURATION_MS: 30000,
     DEFAULT_TIMEOUT_MS: 5000,
@@ -125,7 +125,6 @@ class SamsungACLogic {
         this.maxTemp = this.config.maxTemp ?? 30;
         this.debugMode = this.config.debug === true;
 
-        // === 🐞 오류 수정: 인증서 경로를 플러그인 내부 폴더로 지정 ===
         const defaultCertPath = `${__dirname}/cert/cert.pem`;
         const certPath = this.config.certPath || defaultCertPath;
         const keyPath = this.config.keyPath || certPath;
@@ -252,34 +251,42 @@ class SamsungACLogic {
     }
 }
 
+// =========================================================================
+// === 🚀 개선 사항 적용: 새로운 SamsungACPlatform 클래스 ===
+// =========================================================================
 class SamsungACPlatform {
     constructor(log, config, api) {
         this.log = log;
         this.config = config;
         this.api = api;
-        this.accessories = [];
+        this.cachedAccessories = []; // 캐시된 액세서리를 저장할 배열
 
         this.log.info("삼성 AC 플랫폼을 초기화합니다...");
         this.api.on('didFinishLaunching', () => this.discoverDevices());
     }
 
     configureAccessory(accessory) {
-        this.log.info(`캐시에서 '${accessory.displayName}' 액세서리를 불러옵니다.`);
-        this.accessories.push(accessory);
+        this.log.info(`캐시에서 '${accessory.displayName}' 액세서리를 복원합니다.`);
+        this.cachedAccessories.push(accessory);
     }
 
     discoverDevices() {
-        const platformAccessories = this.config.accessories || [];
-        this.log.info(`${platformAccessories.length}개의 에어컨 장치를 설정에서 찾았습니다.`);
+        const configuredAccessories = this.config.accessories || [];
+        const newAccessories = [];
+        const activeUUIDs = new Set();
 
-        for (const accessoryConfig of platformAccessories) {
+        this.log.info(`${configuredAccessories.length}개의 에어컨 장치를 설정에서 찾았습니다.`);
+
+        for (const accessoryConfig of configuredAccessories) {
             if (!accessoryConfig.name || !accessoryConfig.ip || !accessoryConfig.token) {
                 this.log.warn('잘못된 에어컨 설정이 있어 건너뜁니다. (name, ip, token 필요)', accessoryConfig);
                 continue;
             }
 
             const uuid = HAP.uuid.generate(accessoryConfig.ip + accessoryConfig.name);
-            const existingAccessory = this.accessories.find(accessory => accessory.UUID === uuid);
+            activeUUIDs.add(uuid);
+
+            const existingAccessory = this.cachedAccessories.find(accessory => accessory.UUID === uuid);
 
             if (existingAccessory) {
                 this.log.info(`'${accessoryConfig.name}' 액세서리를 복원하고 로직을 연결합니다.`);
@@ -288,8 +295,18 @@ class SamsungACPlatform {
                 this.log.info(`'${accessoryConfig.name}'를 새로운 액세서리로 등록합니다.`);
                 const accessory = new this.api.platformAccessory(accessoryConfig.name, uuid);
                 new SamsungACLogic(this.log, accessoryConfig, this.api, accessory);
-                this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+                newAccessories.push(accessory);
             }
+        }
+        
+        if (newAccessories.length > 0) {
+            this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, newAccessories);
+        }
+
+        const accessoriesToRemove = this.cachedAccessories.filter(accessory => !activeUUIDs.has(accessory.UUID));
+        if (accessoriesToRemove.length > 0) {
+            this.log.info(`${accessoriesToRemove.length}개의 오래된 액세서리를 제거합니다.`);
+            this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, accessoriesToRemove);
         }
     }
 }
