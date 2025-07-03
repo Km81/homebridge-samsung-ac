@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 2.0.5 (Improved accessory management)
+// Version 2.0.6 (Improved accessory management)
 'use strict';
 
 const tls = require('tls');
