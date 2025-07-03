@@ -1,6 +1,7 @@
 {
   "pluginAlias": "SamsungACPlatform",
   "pluginType": "platform",
+  "singular": true,
   "schema": {
     "type": "object",
     "properties": {
@@ -12,25 +13,24 @@
       },
       "accessories": {
         "type": "array",
+        "title": "에어컨 장치 목록",
         "items": {
           "type": "object",
+          "required": ["name", "ip", "token"],
           "properties": {
             "name": {
               "title": "액세서리 이름",
               "type": "string",
-              "required": true,
               "description": "홈 앱에 표시될 에어컨의 이름을 입력하세요."
             },
             "ip": {
               "title": "에어컨 IP 주소",
               "type": "string",
-              "format": "ipv4",
-              "required": true
+              "format": "ipv4"
             },
             "token": {
               "title": "인증 토큰",
-              "type": "string",
-              "required": true
+              "type": "string"
             },
             "deviceIndex": {
               "title": "장치 인덱스 (읽기)",
@@ -39,7 +39,8 @@
             },
             "setDeviceIndex": {
               "title": "장치 인덱스 (쓰기)",
-              "type": "integer"
+              "type": "integer",
+              "default": 0
             },
             "swingModeType": {
               "title": "스윙(회전) 모드 타입",
@@ -52,7 +53,8 @@
             },
             "pollingInterval": {
               "title": "상태 폴링 간격 (초)",
-              "type": "integer"
+              "type": "integer",
+              "default": 10
             },
             "timeout": {
               "title": "요청 시간 초과 (ms)",
@@ -63,6 +65,16 @@
               "title": "캐시 유지 시간 (ms)",
               "type": "integer",
               "default": 30000
+            },
+            "certPath": {
+              "title": "인증서 경로",
+              "type": "string",
+              "default": ""
+            },
+            "keyPath": {
+              "title": "키 파일 경로",
+              "type": "string",
+              "default": ""
             },
             "debug": {
               "title": "상세 로그 활성화",
@@ -102,7 +114,7 @@
   "layout": [
     {
       "type": "help",
-      "help": "이 플러그인은 TLSv1을 사용하는 구형 삼성 에어컨을 위한 것입니다. 각 에어컨 장치를 아래 목록에 추가하여 관리할 수 있습니다."
+      "help": "이 플러그인은 TLSv1을 사용하는 구형 삼성 에어컨을 위한 것입니다. 버전 2.0.9를 사용하세요."
     },
     "name",
     {
@@ -119,6 +131,15 @@
         },
         {
           "type": "fieldset",
+          "title": "인증서 설정",
+          "expandable": true,
+          "items": [
+            "certPath",
+            "keyPath"
+          ]
+        },
+        {
+          "type": "fieldset",
           "title": "고급 설정",
           "expandable": true,
           "items": [
@@ -131,14 +152,14 @@
           ]
         },
         {
-            "type": "fieldset",
-            "title": "부가 기능 설정",
-            "expandable": true,
-            "items": [
-              "debug",
-              "minTemp",
-              "maxTemp"
-            ]
+          "type": "fieldset",
+          "title": "부가 기능 설정",
+          "expandable": true,
+          "items": [
+            "debug",
+            "minTemp",
+            "maxTemp"
+          ]
         },
         {
           "type": "fieldset",
