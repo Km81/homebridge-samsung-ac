@@ -1,118 +1,156 @@
 {
-  "pluginAlias": "SamsungAC",
-  "pluginType": "accessory",
+  "pluginAlias": "SamsungACPlatform",
+  "pluginType": "platform",
+  "singular": true,
   "schema": {
     "type": "object",
     "properties": {
       "name": {
-        "title": "액세서리 이름",
+        "title": "플랫폼 이름",
         "type": "string",
-        "required": true,
-        "description": "홈 앱에 표시될 에어컨의 이름을 입력하세요."
+        "default": "Samsung ACs",
+        "required": true
       },
-      "ip": {
-        "title": "에어컨 IP 주소",
-        "type": "string",
-        "format": "ipv4",
-        "required": true,
-        "description": "에어컨의 고정 IP 주소를 입력하세요."
-      },
-      "token": {
-        "title": "인증 토큰",
-        "type": "string",
-        "required": true,
-        "description": "에어컨 인증 토큰을 입력하세요."
-      },
-      "deviceIndex": {
-        "title": "장치 인덱스 (읽기)",
-        "type": "integer",
-        "default": 0,
-        "description": "API 응답에서 상태를 읽어올 장치의 인덱스입니다 (0부터 시작)."
-      },
-      "setDeviceIndex": {
-        "title": "장치 인덱스 (쓰기)",
-        "type": "integer",
-        "description": "명령을 보낼 장치의 인덱스입니다. 비워두면 '읽기' 인덱스와 동일하게 설정됩니다."
-      },
-      "swingModeType": {
-        "title": "스윙(회전) 모드 타입",
-        "type": "string",
-        "default": "comfort",
-        "oneOf": [
-          { "title": "컴포트 모드 (바람세기 자동 조절)", "enum": ["comfort"] },
-          { "title": "상하 회전 (바람 방향만 조절)", "enum": ["wind"] }
-        ],
-        "description": "스윙(회전) 기능을 어떤 명령어로 제어할지 선택합니다."
-      },
-      "pollingInterval": {
-        "title": "상태 폴링 간격 (초)",
-        "type": "integer",
-        "description": "리모컨 등 외부에서 상태 변경 시 동기화할 시간 간격(초)입니다. 0 또는 비워두면 비활성화됩니다."
-      },
-      "timeout": {
-        "title": "요청 시간 초과 (ms)",
-        "type": "integer",
-        "default": 5000,
-        "description": "에어컨의 응답을 기다리는 최대 시간입니다 (1000 = 1초)."
-      },
-      "cacheDuration": {
-        "title": "캐시 유지 시간 (ms)",
-        "type": "integer",
-        "default": 30000,
-        "description": "가져온 상태 정보를 재사용할 시간입니다 (1000 = 1초)."
-      },
-      "manufacturer": {
-          "title": "제조사",
-          "type": "string",
-          "default": "Samsung",
-          "description": "홈 앱에 표시될 제조사 이름입니다."
-      },
-      "model": {
-          "title": "모델명",
-          "type": "string",
-          "default": "AC-Model-01",
-          "description": "홈 앱에 표시될 모델명입니다."
-      },
-      "serialNumber": {
-          "title": "시리얼 번호",
-          "type": "string",
-          "default": "A1-SERIAL-01",
-          "description": "홈 앱에 표시될 시리얼 번호입니다."
+      "accessories": {
+        "type": "array",
+        "title": "에어컨 장치 목록",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "title": "액세서리 이름",
+              "type": "string",
+              "required": true,
+              "description": "홈 앱에 표시될 에어컨의 이름을 입력하세요."
+            },
+            "ip": {
+              "title": "에어컨 IP 주소",
+              "type": "string",
+              "format": "ipv4",
+              "required": true
+            },
+            "token": {
+              "title": "인증 토큰",
+              "type": "string",
+              "required": true
+            },
+            "deviceIndex": {
+              "title": "장치 인덱스 (읽기)",
+              "type": "integer",
+              "default": 0
+            },
+            "setDeviceIndex": {
+              "title": "장치 인덱스 (쓰기)",
+              "type": "integer"
+            },
+            "swingModeType": {
+              "title": "스윙(회전) 모드 타입",
+              "type": "string",
+              "default": "comfort",
+              "oneOf": [
+                { "title": "컴포트 모드 (바람세기 자동 조절)", "enum": ["comfort"] },
+                { "title": "상하 회전 (바람 방향만 조절)", "enum": ["wind"] }
+              ]
+            },
+            "pollingInterval": {
+              "title": "상태 폴링 간격 (초)",
+              "type": "integer"
+            },
+            "timeout": {
+              "title": "요청 시간 초과 (ms)",
+              "type": "integer",
+              "default": 5000
+            },
+            "cacheDuration": {
+              "title": "캐시 유지 시간 (ms)",
+              "type": "integer",
+              "default": 30000
+            },
+            "debug": {
+              "title": "상세 로그 활성화",
+              "type": "boolean",
+              "default": false
+            },
+            "minTemp": {
+              "title": "최저 설정 온도 (°C)",
+              "type": "integer",
+              "default": 18
+            },
+            "maxTemp": {
+              "title": "최고 설정 온도 (°C)",
+              "type": "integer",
+              "default": 30
+            },
+            "manufacturer": {
+              "title": "제조사",
+              "type": "string",
+              "default": "Samsung"
+            },
+            "model": {
+              "title": "모델명",
+              "type": "string",
+              "default": "AC-Model"
+            },
+            "serialNumber": {
+              "title": "시리얼 번호",
+              "type": "string",
+              "default": "A1-SERIAL"
+            }
+          }
+        }
       }
     }
   },
   "layout": [
     {
       "type": "help",
-      "help": "이 플러그인은 TLSv1을 사용하는 구형 삼성 에어컨을 위한 것입니다. 인증서가 내장되어 IP와 토큰만으로 간편하게 설정할 수 있습니다."
-    },
-    "name",
-    "ip",
-    {
-      "key": "token",
-      "type": "password"
+      "help": "이 플러그인은 TLSv1을 사용하는 구형 삼성 에어컨을 위한 것입니다. 각 에어컨 장치를 아래 목록에 추가하여 관리할 수 있습니다."
     },
     {
-      "type": "fieldset",
-      "title": "고급 설정",
-      "expandable": true,
+      "key": "accessories",
+      "type": "list",
+      "title": "에어컨 목록",
+      "buttonText": "에어컨 추가",
       "items": [
-        "deviceIndex",
-        "setDeviceIndex",
-        "swingModeType",
-        "pollingInterval",
-        "timeout",
-        "cacheDuration"
-      ]
-    },
-    {
-      "type": "fieldset",
-      "title": "액세서리 정보 (선택 사항)",
-      "expandable": true,
-      "items": [
-        "manufacturer",
-        "model",
-        "serialNumber"
+        "accessories[].name",
+        "accessories[].ip",
+        {
+          "key": "accessories[].token",
+          "type": "password"
+        },
+        {
+          "type": "fieldset",
+          "title": "고급 설정",
+          "expandable": true,
+          "items": [
+            "accessories[].deviceIndex",
+            "accessories[].setDeviceIndex",
+            "accessories[].swingModeType",
+            "accessories[].pollingInterval",
+            "accessories[].timeout",
+            "accessories[].cacheDuration"
+          ]
+        },
+        {
+            "type": "fieldset",
+            "title": "부가 기능 설정",
+            "expandable": true,
+            "items": [
+              "accessories[].debug",
+              "accessories[].minTemp",
+              "accessories[].maxTemp"
+            ]
+        },
+        {
+          "type": "fieldset",
+          "title": "액세서리 정보 (선택 사항)",
+          "expandable": true,
+          "items": [
+            "accessories[].manufacturer",
+            "accessories[].model",
+            "accessories[].serialNumber"
+          ]
+        }
       ]
     }
   ]
