@@ -1,6 +1,6 @@
 {
   "pluginAlias": "SamsungAC",
-  "pluginType": "platform",
+  "pluginType": "accessory",
   "schema": {
     "type": "object",
     "properties": {
