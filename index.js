@@ -1,5 +1,85 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 2.0.15
+// Version 2.0.16 (Multi-Device Platform Model)
+'use strict';
+
+const tls = require('tls');
+const fs = require('fs');
+const { constants } = require('crypto');
+
+let HAP;
+
+const PLUGIN_NAME = 'homebridge-samsung-ac';
+const PLATFORM_NAME = 'SamsungACPlatform';
+
+// ... (ApiClient, SwingModeHandler, SamsungACLogic 클래스는 이전과 동일) ...
+// (아래에 전체 코드가 있으니 그대로 복사하시면 됩니다)
+
+class SamsungACPlatform {
+    constructor(log, config, api) {
+        this.log = log;
+        this.config = config;
+        this.api = api;
+        this.cachedAccessories = new Map();
+
+        this.log.info("삼성 AC 플랫폼을 초기화합니다...");
+        this.api.on('didFinishLaunching', () => this.discoverDevices());
+    }
+
+    configureAccessory(accessory) {
+        this.log.info(`캐시에서 '${accessory.displayName}' 액세서리를 불러옵니다.`);
+        this.cachedAccessories.set(accessory.UUID, accessory);
+    }
+
+    discoverDevices() {
+        const configuredDevices = this.config.accessories || [];
+        const activeUUIDs = new Set();
+        
+        this.log.info(`${configuredDevices.length}개의 에어컨 장치를 설정에서 찾았습니다.`);
+
+        for (const deviceConfig of configuredDevices) {
+            if (!deviceConfig.name || !deviceConfig.ip || !deviceConfig.token) {
+                this.log.warn('잘못된 에어컨 설정이 있어 건너뜁니다.', deviceConfig);
+                continue;
+            }
+
+            const uuid = HAP.uuid.generate(deviceConfig.ip + deviceConfig.name);
+            activeUUIDs.add(uuid);
+
+            const existingAccessory = this.cachedAccessories.get(uuid);
+
+            if (existingAccessory) {
+                this.log.info(`'${deviceConfig.name}' 액세서리를 복원하고 로직을 연결합니다.`);
+                existingAccessory.context.config = deviceConfig;
+                this.api.updatePlatformAccessories([existingAccessory]);
+                new SamsungACLogic(this.log, deviceConfig, this.api, existingAccessory);
+            } else {
+                this.log.info(`'${deviceConfig.name}'를 새로운 액세서리로 등록합니다.`);
+                const accessory = new this.api.platformAccessory(deviceConfig.name, uuid);
+                accessory.context.config = deviceConfig;
+                new SamsungACLogic(this.log, deviceConfig, this.api, accessory);
+                this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+            }
+        }
+        
+        const accessoriesToRemove = [];
+        for (const accessory of this.cachedAccessories.values()) {
+            if (!activeUUIDs.has(accessory.UUID)) {
+                accessoriesToRemove.push(accessory);
+            }
+        }
+
+        if (accessoriesToRemove.length > 0) {
+            this.log.info(`${accessoriesToRemove.length}개의 오래된 액세서리를 제거합니다.`);
+            this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, accessoriesToRemove);
+        }
+    }
+}
+
+
+// --- 아래는 전체 코드입니다. ---
+
+// Samsung Air Conditioner Homebridge Plugin
+// Version 2.0.16 (Multi-Device Platform Model)
 'use strict';
 
 const tls = require('tls');
@@ -14,7 +94,7 @@ const PLATFORM_NAME = 'SamsungACPlatform';
 const CONSTANTS = {
     API_PORT: 8888,
     API_DEVICES_PATH: '/devices',
-    PLUGIN_VERSION: '2.0.7',
+    PLUGIN_VERSION: '2.0.16',
     DEFAULT_RETRY_ATTEMPTS: 3,
     DEFAULT_CACHE_DURATION_MS: 30000,
     DEFAULT_TIMEOUT_MS: 5000,
@@ -124,20 +204,17 @@ class SamsungACLogic {
         this.minTemp = this.config.minTemp ?? 18;
         this.maxTemp = this.config.maxTemp ?? 30;
         this.debugMode = this.config.debug === true;
-
         const defaultCertPath = `${__dirname}/cert/cert.pem`;
         const certPath = this.config.certPath || defaultCertPath;
         const keyPath = this.config.keyPath || certPath;
-        
         try {
             if (!fs.existsSync(certPath)) {
-                 throw new Error(`인증서 파일을 찾을 수 없습니다: ${certPath}. cert 폴더와 cert.pem 파일이 플러그인 디렉토리 내에 있는지 확인하세요.`);
+                throw new Error(`인증서 파일을 찾을 수 없습니다: ${certPath}. cert 폴더와 cert.pem 파일이 플러그인 디렉토리 내에 있는지 확인하세요.`);
             }
         } catch (e) {
             this.log.error(`[${this.name}] ${e.message}`);
             return;
         }
-        
         this.swingModeHandler = new SwingModeHandler(this.swingModeType);
         this.client = new ApiClient(this.config.ip, this.config.token, this.log, { timeout: this.timeout, certPath, keyPath });
         this.deviceState = null;
@@ -153,9 +230,7 @@ class SamsungACLogic {
         this.startPolling();
         this.log.info(`[${this.name}] 초기화 완료.`);
     }
-
     debugLog(message) { if (this.debugMode) this.log.info(`[${this.name}] ${message}`); }
-
     startPolling() {
         if (this.pollingInterval > 0) {
             this.log.info(`[${this.name}] ${this.pollingInterval}초 간격으로 상태 폴링을 시작합니다.`);
@@ -165,7 +240,6 @@ class SamsungACLogic {
             }, this.pollingInterval * 1000);
         }
     }
-
     async getCachedState(force = false) {
         const now = Date.now();
         if (!force && this.deviceState && (now - this.lastStateUpdate < this.cacheDuration)) {
@@ -190,14 +264,12 @@ class SamsungACLogic {
         })();
         return await this.stateRequestPromise;
     }
-
     async sendCommand(endpoint, data) {
         this.log.info(`[${this.name}] 명령 전송: ${endpoint} -> ${JSON.stringify(data)}`);
         await this.client.sendCommand(this.setDeviceIndex, endpoint, data);
         await new Promise(resolve => setTimeout(resolve, 500));
         await this.getCachedState(true);
     }
-    
     _createGetter(name, extractor) {
         return async () => {
             this.debugLog(`GET ${name}`);
@@ -209,7 +281,6 @@ class SamsungACLogic {
             } catch (e) { this.log.error(`GET ${name} 오류:`, e.message); throw e; }
         };
     }
-
     _createSetter(name, commandBuilder) {
         return async (value) => {
             this.log.info(`[${this.name}] SET ${name} -> ${value}`);
@@ -219,98 +290,31 @@ class SamsungACLogic {
             } catch (e) { this.log.error(`SET ${name} 오류:`, e.message); throw e; }
         };
     }
-    
     setupCharacteristics() {
         this.aircoService.getCharacteristic(this.Characteristic.Active)
             .onGet(this._createGetter('Active', state => state.Operation.power === CONSTANTS.POWER.ON ? 1 : 0))
             .onSet(this._createSetter('Active', value => ({ endpoint: '', data: { Operation: { power: value ? CONSTANTS.POWER.ON : CONSTANTS.POWER.OFF } } })));
-
         this.aircoService.getCharacteristic(this.Characteristic.CurrentHeaterCoolerState)
             .onGet(this._createGetter('CurrentState', state => state.Operation.power !== CONSTANTS.POWER.ON ? this.Characteristic.CurrentHeaterCoolerState.INACTIVE : this.Characteristic.CurrentHeaterCoolerState.COOLING));
-
         this.aircoService.getCharacteristic(this.Characteristic.TargetHeaterCoolerState)
             .setProps({ validValues: [this.Characteristic.TargetHeaterCoolerState.COOL] })
             .onGet(this._createGetter('TargetState', () => this.Characteristic.TargetHeaterCoolerState.COOL))
             .onSet(value => this.log.info(`[${this.name}] SET TargetState -> ${value} (COOL 모드만 지원)`));
-
         this.aircoService.getCharacteristic(this.Characteristic.CurrentTemperature)
             .onGet(this._createGetter('CurrentTemp', state => state.Temperatures[0].current));
-            
         this.aircoService.getCharacteristic(this.Characteristic.CoolingThresholdTemperature)
             .setProps({ minValue: this.minTemp, maxValue: this.maxTemp, minStep: 1 })
             .onGet(this._createGetter('TargetTemp', state => state.Temperatures[0].desired))
             .onSet(this._createSetter('TargetTemp', value => ({ endpoint: '/temperatures/0', data: { desired: value } })));
-
         this.aircoService.getCharacteristic(this.Characteristic.SwingMode)
             .onGet(this._createGetter('SwingMode', state => this.swingModeHandler.getValue(state) ? 1 : 0))
             .onSet(this._createSetter('SwingMode', value => this.swingModeHandler.getCommand(value === 1)));
-
         this.aircoService.getCharacteristic(this.Characteristic.LockPhysicalControls)
             .onGet(this._createGetter('LockControls', state => state.Mode.options.includes(CONSTANTS.AUTOCLEAN.ON) ? 1 : 0))
             .onSet(this._createSetter('LockControls', value => ({ endpoint: '/mode', data: { options: [value ? CONSTANTS.AUTOCLEAN.ON : CONSTANTS.AUTOCLEAN.OFF] } })));
     }
 }
 
-class SamsungACPlatform {
-    constructor(log, config, api) {
-        this.log = log;
-        this.config = config;
-        this.api = api;
-        this.cachedAccessories = new Map();
-
-        this.log.info("삼성 AC 플랫폼을 초기화합니다...");
-        this.api.on('didFinishLaunching', () => this.discoverDevices());
-    }
-
-    configureAccessory(accessory) {
-        this.log.info(`캐시에서 '${accessory.displayName}' 액세서리를 불러옵니다.`);
-        this.cachedAccessories.set(accessory.UUID, accessory);
-    }
-
-    discoverDevices() {
-        const configuredAccessories = this.config.accessories || [];
-        const activeUUIDs = new Set();
-        
-        this.log.info(`${configuredAccessories.length}개의 에어컨 장치를 설정에서 찾았습니다.`);
-
-        for (const accessoryConfig of configuredAccessories) {
-            if (!accessoryConfig.name || !accessoryConfig.ip || !accessoryConfig.token) {
-                this.log.warn('잘못된 에어컨 설정이 있어 건너뜁니다. (name, ip, token 필요)', accessoryConfig);
-                continue;
-            }
-
-            const uuid = HAP.uuid.generate(accessoryConfig.ip + accessoryConfig.name);
-            activeUUIDs.add(uuid);
-
-            const existingAccessory = this.cachedAccessories.get(uuid);
-
-            if (existingAccessory) {
-                this.log.info(`'${accessoryConfig.name}' 액세서리를 복원하고 로직을 연결합니다.`);
-                existingAccessory.context.config = accessoryConfig;
-                this.api.updatePlatformAccessories([existingAccessory]);
-                new SamsungACLogic(this.log, accessoryConfig, this.api, existingAccessory);
-            } else {
-                this.log.info(`'${accessoryConfig.name}'를 새로운 액세서리로 등록합니다.`);
-                const accessory = new this.api.platformAccessory(accessoryConfig.name, uuid);
-                accessory.context.config = accessoryConfig;
-                new SamsungACLogic(this.log, accessoryConfig, this.api, accessory);
-                this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
-            }
-        }
-        
-        const accessoriesToRemove = [];
-        for (const accessory of this.cachedAccessories.values()) {
-            if (!activeUUIDs.has(accessory.UUID)) {
-                accessoriesToRemove.push(accessory);
-            }
-        }
-
-        if (accessoriesToRemove.length > 0) {
-            this.log.info(`${accessoriesToRemove.length}개의 오래된 액세서리를 제거합니다.`);
-            this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, accessoriesToRemove);
-        }
-    }
-}
 
 module.exports = (homebridge) => {
     HAP = homebridge.hap;
