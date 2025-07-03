@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 2.0.2 (Converted to Platform with Feature Enhancements)
+// Version 2.0.3 (Converted to Platform with Feature Enhancements)
 'use strict';
 
 const tls = require('tls');
@@ -14,7 +14,7 @@ const PLATFORM_NAME = 'SamsungACPlatform';
 const CONSTANTS = {
     API_PORT: 8888,
     API_DEVICES_PATH: '/devices',
-    PLUGIN_VERSION: '2.0.2',
+    PLUGIN_VERSION: '2.0.3',
     DEFAULT_RETRY_ATTEMPTS: 3,
     DEFAULT_CACHE_DURATION_MS: 30000,
     DEFAULT_TIMEOUT_MS: 5000,
@@ -25,13 +25,38 @@ const CONSTANTS = {
     MODE: { COOL: 'Cool', DRY: 'Dry', WIND: 'Wind', AUTO: 'Auto' }
 };
 
+// =========================================================================
+// === 클래스 정의 (오류 수정을 위해 순서 조정) ===
+// =========================================================================
+
+class SwingModeHandler {
+    constructor(type) {
+        this.type = type;
+    }
+    getValue(state) {
+        if (!state) return false;
+        if (this.type === 'wind') {
+            return state.Wind?.direction === CONSTANTS.SWING.UP_DOWN;
+        }
+        return state.Mode?.options?.includes(CONSTANTS.COMFORT.NANO_ON);
+    }
+    getCommand(enable) {
+        if (this.type === 'wind') {
+            const dir = enable ? CONSTANTS.SWING.UP_DOWN : CONSTANTS.SWING.FIX;
+            return { endpoint: '/wind', data: { direction: dir } };
+        }
+        const opt = enable ? CONSTANTS.COMFORT.NANO_ON : CONSTANTS.COMFORT.NANO_OFF;
+        return { endpoint: '/mode', data: { options: [opt] } };
+    }
+}
+
 class ApiClient {
     constructor(ip, token, log, options) {
         this.ip = ip;
         this.token = token;
         this.log = log;
         this.timeout = options.timeout;
-        
+
         this.tlsOptions = {
             host: this.ip,
             port: CONSTANTS.API_PORT,
@@ -68,7 +93,7 @@ class ApiClient {
             }
         }
     }
-    
+
     _rawRequest(path, method, data) {
         return new Promise((resolve, reject) => {
             const jsonData = data ? JSON.stringify(data) : '';
@@ -90,7 +115,7 @@ class ApiClient {
                     const bodySeparator = '\r\n\r\n';
                     const bodyIndex = responseChunks.indexOf(bodySeparator);
                     if (bodyIndex === -1) return reject(new Error('HTTP 본문 구분자를 찾을 수 없습니다.'));
-                    
+
                     const body = responseChunks.slice(bodyIndex + bodySeparator.length).trim();
                     if (!body) return resolve({});
 
@@ -101,7 +126,7 @@ class ApiClient {
                     if (!socket.destroyed) socket.destroy();
                 }
             });
-            
+
             socket.setTimeout(this.timeout, () => {
                 socket.destroy();
                 reject(new Error(`요청 시간 초과 (${this.timeout}ms)`));
@@ -122,7 +147,7 @@ class SamsungACLogic {
         this.accessory = accessory;
         this.Service = api.hap.Service;
         this.Characteristic = api.hap.Characteristic;
-        
+
         this.name = this.config.name;
         this.deviceIndex = this.config.deviceIndex ?? 0;
         this.setDeviceIndex = this.config.setDeviceIndex ?? this.deviceIndex;
@@ -134,12 +159,13 @@ class SamsungACLogic {
         this.maxTemp = this.config.maxTemp ?? 30;
         this.debugMode = this.config.debug === true;
 
-        const defaultCertPath = `${api.user.storagePath()}/cert.pem`; // More robust path
+        const defaultCertPath = `${api.user.storagePath()}/cert.pem`;
         const certPath = this.config.certPath || defaultCertPath;
         const keyPath = this.config.keyPath || certPath;
         
+        // 이 부분에서 오류가 발생했었습니다. SwingModeHandler가 먼저 정의되어야 합니다.
         this.swingModeHandler = new SwingModeHandler(this.swingModeType);
-        
+
         this.client = new ApiClient(this.config.ip, this.config.token, this.log, {
             timeout: this.timeout, certPath, keyPath
         });
@@ -154,12 +180,12 @@ class SamsungACLogic {
             .setCharacteristic(this.Characteristic.Model, this.config.model || 'AC-Model')
             .setCharacteristic(this.Characteristic.SerialNumber, this.config.serialNumber || this.name)
             .setCharacteristic(this.Characteristic.FirmwareRevision, CONSTANTS.PLUGIN_VERSION);
-        
+
         this.setupCharacteristics();
         this.startPolling();
         this.log.info(`[${this.name}] 초기화 완료.`);
     }
-    
+
     debugLog(message) { if (this.debugMode) this.log.info(message); }
 
     startPolling() {
@@ -203,7 +229,7 @@ class SamsungACLogic {
         await new Promise(resolve => setTimeout(resolve, 500));
         await this.getCachedState(true);
     }
-    
+
     _createGetter(name, extractor) {
         return async () => {
             this.debugLog(`[${this.name}] GET ${name}`);
@@ -225,7 +251,7 @@ class SamsungACLogic {
             } catch (e) { this.log.error(`[${this.name}] SET ${name} 오류:`, e.message); throw e; }
         };
     }
-    
+
     setupCharacteristics() {
         this.aircoService.getCharacteristic(this.Characteristic.Active)
             .onGet(this._createGetter('Active', state => state.Operation.power === CONSTANTS.POWER.ON ? 1 : 0))
@@ -244,7 +270,7 @@ class SamsungACLogic {
 
         this.aircoService.getCharacteristic(this.Characteristic.CurrentTemperature)
             .onGet(this._createGetter('CurrentTemp', state => state.Temperatures[0].current));
-            
+
         this.aircoService.getCharacteristic(this.Characteristic.CoolingThresholdTemperature)
             .setProps({ minValue: this.minTemp, maxValue: this.maxTemp, minStep: 1 })
             .onGet(this._createGetter('TargetTemp', state => state.Temperatures[0].desired))
