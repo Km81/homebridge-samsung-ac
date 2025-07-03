@@ -112,10 +112,10 @@
       "title": "에어컨 목록",
       "buttonText": "에어컨 추가",
       "items": [
-        "accessories[].name",
-        "accessories[].ip",
+        "name",
+        "ip",
         {
-          "key": "accessories[].token",
+          "key": "token",
           "type": "password"
         },
         {
@@ -123,12 +123,12 @@
           "title": "고급 설정",
           "expandable": true,
           "items": [
-            "accessories[].deviceIndex",
-            "accessories[].setDeviceIndex",
-            "accessories[].swingModeType",
-            "accessories[].pollingInterval",
-            "accessories[].timeout",
-            "accessories[].cacheDuration"
+            "deviceIndex",
+            "setDeviceIndex",
+            "swingModeType",
+            "pollingInterval",
+            "timeout",
+            "cacheDuration"
           ]
         },
         {
@@ -136,9 +136,9 @@
             "title": "부가 기능 설정",
             "expandable": true,
             "items": [
-              "accessories[].debug",
-              "accessories[].minTemp",
-              "accessories[].maxTemp"
+              "debug",
+              "minTemp",
+              "maxTemp"
             ]
         },
         {
@@ -146,9 +146,9 @@
           "title": "액세서리 정보 (선택 사항)",
           "expandable": true,
           "items": [
-            "accessories[].manufacturer",
-            "accessories[].model",
-            "accessories[].serialNumber"
+            "manufacturer",
+            "model",
+            "serialNumber"
           ]
         }
       ]
