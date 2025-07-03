@@ -1,9 +1,9 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 2.0.18 (Multi-Device Platform Model)
+// Version 2.0.19 (Professional Grade Refinements)
 'use strict';
 
 const tls = require('tls');
-const fs = require('fs');
+const fs =require('fs');
 const { constants } = require('crypto');
 
 let HAP;
@@ -14,7 +14,7 @@ const PLATFORM_NAME = 'SamsungACPlatform';
 const CONSTANTS = {
     API_PORT: 8888,
     API_DEVICES_PATH: '/devices',
-    PLUGIN_VERSION: '2.0.17',
+    PLUGIN_VERSION: '2.0.19',
     DEFAULT_RETRY_ATTEMPTS: 3,
     DEFAULT_CACHE_DURATION_MS: 30000,
     DEFAULT_TIMEOUT_MS: 5000,
@@ -24,6 +24,17 @@ const CONSTANTS = {
     AUTOCLEAN: { ON: 'Autoclean_On', OFF: 'Autoclean_Off' },
     MODE: { COOL: 'Cool', DRY: 'Dry', WIND: 'Wind', AUTO: 'Auto' }
 };
+
+// 개선점 2: 인증서 캐시
+const certificateCache = new Map();
+function getCertificate(path) {
+    if (certificateCache.has(path)) {
+        return certificateCache.get(path);
+    }
+    const certBuffer = fs.readFileSync(path);
+    certificateCache.set(path, certBuffer);
+    return certBuffer;
+}
 
 class SwingModeHandler {
     constructor(type) { this.type = type; }
@@ -50,7 +61,7 @@ class ApiClient {
         this.timeout = options.timeout;
         this.tlsOptions = {
             host: this.ip, port: CONSTANTS.API_PORT,
-            cert: fs.readFileSync(options.certPath), key: fs.readFileSync(options.keyPath),
+            cert: options.cert, key: options.key, // 개선점 2: 파일 경로 대신 버퍼를 직접 받음
             rejectUnauthorized: false, honorCipherOrder: true,
             ciphers: 'DEFAULT@SECLEVEL=0', minVersion: 'TLSv1', maxVersion: 'TLSv1',
             secureOptions: constants.SSL_OP_LEGACY_SERVER_CONNECT,
@@ -63,12 +74,15 @@ class ApiClient {
             try {
                 return await this._rawRequest(path, method, data);
             } catch (e) {
-                if (attempt === retries) {
+                // 개선점 4: 지능형 오류 재시도
+                const isNetworkError = /ETIMEDOUT|ECONNRESET|EHOSTUNREACH/.test(e.message);
+                if (isNetworkError && attempt < retries) {
+                    this.log.warn(`[ApiClient] 네트워크 오류, 재시도 ${attempt}/${retries}... (${e.message})`);
+                    await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+                } else {
                     this.log.error(`[ApiClient] 최종 요청 실패 (${attempt}회 시도): ${e.message}`);
-                    throw e;
+                    throw e; // 재시도 불가능한 오류는 즉시 throw
                 }
-                this.log.warn(`[ApiClient] 요청 실패, 재시도 ${attempt}/${retries}... (${e.message})`);
-                await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
             }
         }
     }
@@ -112,8 +126,16 @@ class SamsungACLogic {
         this.log = log;
         this.config = config;
         this.accessory = accessory;
+        this.api = api;
         this.Service = api.hap.Service;
         this.Characteristic = api.hap.Characteristic;
+        
+        // 개선점 5: 설정값 유효성 검증 강화
+        if (!config.name || !config.ip || !config.token) {
+            this.log.error(`[${config.name || '이름 없음'}] 필수 설정(name, ip, token)이 누락되어 장치를 초기화할 수 없습니다.`);
+            return;
+        }
+
         this.name = this.config.name;
         this.deviceIndex = this.config.deviceIndex ?? 0;
         this.setDeviceIndex = this.config.setDeviceIndex ?? this.deviceIndex;
@@ -124,42 +146,73 @@ class SamsungACLogic {
         this.minTemp = this.config.minTemp ?? 18;
         this.maxTemp = this.config.maxTemp ?? 30;
         this.debugMode = this.config.debug === true;
+        this.pollTimer = null; // 개선점 1, 3: 타이머 ID 저장을 위한 변수
+
         const defaultCertPath = `${__dirname}/cert/cert.pem`;
         const certPath = this.config.certPath || defaultCertPath;
         const keyPath = this.config.keyPath || certPath;
+        
         try {
-            if (!fs.existsSync(certPath)) {
-                throw new Error(`인증서 파일을 찾을 수 없습니다: ${certPath}. cert 폴더와 cert.pem 파일이 플러그인 디렉토리 내에 있는지 확인하세요.`);
-            }
+            // 개선점 2: 파일 경로 대신 캐시된 인증서 버퍼를 사용
+            const certBuffer = getCertificate(certPath);
+            const keyBuffer = getCertificate(keyPath);
+            this.client = new ApiClient(this.config.ip, this.config.token, this.log, { timeout: this.timeout, cert: certBuffer, key: keyBuffer });
         } catch (e) {
-            this.log.error(`[${this.name}] ${e.message}`);
+            this.log.error(`[${this.name}] 인증서 처리 오류: ${e.message}`);
             return;
         }
+
         this.swingModeHandler = new SwingModeHandler(this.swingModeType);
-        this.client = new ApiClient(this.config.ip, this.config.token, this.log, { timeout: this.timeout, certPath, keyPath });
         this.deviceState = null;
         this.lastStateUpdate = 0;
         this.stateRequestPromise = null;
         this.aircoService = this.accessory.getService(this.Service.HeaterCooler) || this.accessory.addService(this.Service.HeaterCooler, this.name);
+        
         this.accessory.getService(this.Service.AccessoryInformation)
             .setCharacteristic(this.Characteristic.Manufacturer, this.config.manufacturer || 'Samsung')
             .setCharacteristic(this.Characteristic.Model, this.config.model || 'AC-Model')
             .setCharacteristic(this.Characteristic.SerialNumber, this.config.serialNumber || this.name)
             .setCharacteristic(this.Characteristic.FirmwareRevision, CONSTANTS.PLUGIN_VERSION);
+            
         this.setupCharacteristics();
         this.startPolling();
+        
+        // 개선점 3: Graceful Shutdown 핸들링
+        this.api.on('shutdown', this.shutdown.bind(this));
+        
         this.log.info(`[${this.name}] 초기화 완료.`);
     }
+
+    shutdown() {
+        this.log.info(`[${this.name}] 홈브릿지 종료 신호 수신. 폴링 타이머를 정리합니다.`);
+        if (this.pollTimer) {
+            clearTimeout(this.pollTimer);
+        }
+    }
+    
     debugLog(message) { if (this.debugMode) this.log.info(`[${this.name}] ${message}`); }
+
+    // 개선점 1: 재귀적 setTimeout으로 폴링 방식 변경
     startPolling() {
         if (this.pollingInterval > 0) {
             this.log.info(`[${this.name}] ${this.pollingInterval}초 간격으로 상태 폴링을 시작합니다.`);
-            setInterval(() => {
-                this.debugLog(`주기적인 상태 업데이트 실행...`);
-                this.getCachedState(true).catch(e => this.log.error(`[${this.name}] 폴링 실패:`, e.message));
-            }, this.pollingInterval * 1000);
+            this._poll();
         }
     }
+
+    async _poll() {
+        this.debugLog('폴링 실행...');
+        try {
+            await this.getCachedState(true);
+        } catch (e) {
+            this.log.error(`[${this.name}] 폴링 중 오류: ${e.message}`);
+        } finally {
+            // 작업 성공/실패 여부와 관계없이 다음 폴링 예약
+            if (this.pollTimer) clearTimeout(this.pollTimer);
+            this.pollTimer = setTimeout(() => this._poll(), this.pollingInterval * 1000);
+        }
+    }
+
     async getCachedState(force = false) {
         const now = Date.now();
         if (!force && this.deviceState && (now - this.lastStateUpdate < this.cacheDuration)) {
@@ -184,12 +237,14 @@ class SamsungACLogic {
         })();
         return await this.stateRequestPromise;
     }
+
     async sendCommand(endpoint, data) {
         this.log.info(`[${this.name}] 명령 전송: ${endpoint} -> ${JSON.stringify(data)}`);
         await this.client.sendCommand(this.setDeviceIndex, endpoint, data);
         await new Promise(resolve => setTimeout(resolve, 500));
         await this.getCachedState(true);
     }
+    
     _createGetter(name, extractor) {
         return async () => {
             this.debugLog(`GET ${name}`);
@@ -201,6 +256,7 @@ class SamsungACLogic {
             } catch (e) { this.log.error(`GET ${name} 오류:`, e.message); throw e; }
         };
     }
+
     _createSetter(name, commandBuilder) {
         return async (value) => {
             this.log.info(`[${this.name}] SET ${name} -> ${value}`);
@@ -210,6 +266,7 @@ class SamsungACLogic {
             } catch (e) { this.log.error(`SET ${name} 오류:`, e.message); throw e; }
         };
     }
+    
     setupCharacteristics() {
         this.aircoService.getCharacteristic(this.Characteristic.Active)
             .onGet(this._createGetter('Active', state => state.Operation.power === CONSTANTS.POWER.ON ? 1 : 0))
@@ -258,11 +315,7 @@ class SamsungACPlatform {
         this.log.info(`${configuredDevices.length}개의 에어컨 장치를 설정에서 찾았습니다.`);
 
         for (const deviceConfig of configuredDevices) {
-            if (!deviceConfig.name || !deviceConfig.ip || !deviceConfig.token) {
-                this.log.warn('잘못된 에어컨 설정이 있어 건너뜁니다.', deviceConfig);
-                continue;
-            }
-
+            // 개선점 5: 이 로직은 SamsungACLogic 생성자 내부로 이동하여 각 장치별로 처리
             const uuid = HAP.uuid.generate(deviceConfig.ip + deviceConfig.name);
             activeUUIDs.add(uuid);
 
