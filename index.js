@@ -1,5 +1,5 @@
 // Samsung Air Conditioner Homebridge Plugin
-// Version 2.0.6 (Improved accessory management)
+// Version 2.0.7 (Final fix for UI settings restoration)
 'use strict';
 
 const tls = require('tls');
@@ -14,7 +14,7 @@ const PLATFORM_NAME = 'SamsungACPlatform';
 const CONSTANTS = {
     API_PORT: 8888,
     API_DEVICES_PATH: '/devices',
-    PLUGIN_VERSION: '2.0.5',
+    PLUGIN_VERSION: '2.0.7',
     DEFAULT_RETRY_ATTEMPTS: 3,
     DEFAULT_CACHE_DURATION_MS: 30000,
     DEFAULT_TIMEOUT_MS: 5000,
@@ -134,7 +134,7 @@ class SamsungACLogic {
                  throw new Error(`인증서 파일을 찾을 수 없습니다: ${certPath}. cert 폴더와 cert.pem 파일이 플러그인 디렉토리 내에 있는지 확인하세요.`);
             }
         } catch (e) {
-            this.log.error(e.message);
+            this.log.error(`[${this.name}] ${e.message}`);
             return;
         }
         
@@ -154,13 +154,13 @@ class SamsungACLogic {
         this.log.info(`[${this.name}] 초기화 완료.`);
     }
 
-    debugLog(message) { if (this.debugMode) this.log.info(message); }
+    debugLog(message) { if (this.debugMode) this.log.info(`[${this.name}] ${message}`); }
 
     startPolling() {
         if (this.pollingInterval > 0) {
             this.log.info(`[${this.name}] ${this.pollingInterval}초 간격으로 상태 폴링을 시작합니다.`);
             setInterval(() => {
-                this.debugLog(`[${this.name}] 주기적인 상태 업데이트 실행...`);
+                this.debugLog(`주기적인 상태 업데이트 실행...`);
                 this.getCachedState(true).catch(e => this.log.error(`[${this.name}] 폴링 실패:`, e.message));
             }, this.pollingInterval * 1000);
         }
@@ -169,14 +169,14 @@ class SamsungACLogic {
     async getCachedState(force = false) {
         const now = Date.now();
         if (!force && this.deviceState && (now - this.lastStateUpdate < this.cacheDuration)) {
-            this.debugLog(`[${this.name}] 캐시된 상태 사용`);
+            this.debugLog(`캐시된 상태 사용`);
             return this.deviceState;
         }
         if (this.stateRequestPromise) {
-            this.debugLog(`[${this.name}] 진행 중인 요청에 합류합니다.`);
+            this.debugLog(`진행 중인 요청에 합류합니다.`);
             return await this.stateRequestPromise;
         }
-        this.debugLog(`[${this.name}] 장치에서 새 상태를 가져옵니다.`);
+        this.debugLog(`장치에서 새 상태를 가져옵니다.`);
         this.stateRequestPromise = (async () => {
             try {
                 const response = await this.client.getDeviceStatus();
@@ -185,7 +185,7 @@ class SamsungACLogic {
                 this.lastStateUpdate = Date.now();
                 return this.deviceState;
             } catch (e) {
-                this.log.error(`[${this.name}] 상태 가져오기 오류: ${e.message}`); throw e;
+                this.log.error(`상태 가져오기 오류: ${e.message}`); throw e;
             } finally { this.stateRequestPromise = null; }
         })();
         return await this.stateRequestPromise;
@@ -200,13 +200,13 @@ class SamsungACLogic {
     
     _createGetter(name, extractor) {
         return async () => {
-            this.debugLog(`[${this.name}] GET ${name}`);
+            this.debugLog(`GET ${name}`);
             try {
                 const state = await this.getCachedState();
                 const value = extractor(state);
-                this.debugLog(`[${this.name}] > ${name}: ${value}`);
+                this.debugLog(`> ${name}: ${value}`);
                 return value;
-            } catch (e) { this.log.error(`[${this.name}] GET ${name} 오류:`, e.message); throw e; }
+            } catch (e) { this.log.error(`GET ${name} 오류:`, e.message); throw e; }
         };
     }
 
@@ -216,7 +216,7 @@ class SamsungACLogic {
             try {
                 const { endpoint, data } = commandBuilder(value);
                 await this.sendCommand(endpoint, data);
-            } catch (e) { this.log.error(`[${this.name}] SET ${name} 오류:`, e.message); throw e; }
+            } catch (e) { this.log.error(`SET ${name} 오류:`, e.message); throw e; }
         };
     }
     
@@ -251,30 +251,26 @@ class SamsungACLogic {
     }
 }
 
-// =========================================================================
-// === 🚀 개선 사항 적용: 새로운 SamsungACPlatform 클래스 ===
-// =========================================================================
 class SamsungACPlatform {
     constructor(log, config, api) {
         this.log = log;
         this.config = config;
         this.api = api;
-        this.cachedAccessories = []; // 캐시된 액세서리를 저장할 배열
+        this.cachedAccessories = new Map();
 
         this.log.info("삼성 AC 플랫폼을 초기화합니다...");
         this.api.on('didFinishLaunching', () => this.discoverDevices());
     }
 
     configureAccessory(accessory) {
-        this.log.info(`캐시에서 '${accessory.displayName}' 액세서리를 복원합니다.`);
-        this.cachedAccessories.push(accessory);
+        this.log.info(`캐시에서 '${accessory.displayName}' 액세서리를 불러옵니다.`);
+        this.cachedAccessories.set(accessory.UUID, accessory);
     }
 
     discoverDevices() {
         const configuredAccessories = this.config.accessories || [];
-        const newAccessories = [];
         const activeUUIDs = new Set();
-
+        
         this.log.info(`${configuredAccessories.length}개의 에어컨 장치를 설정에서 찾았습니다.`);
 
         for (const accessoryConfig of configuredAccessories) {
@@ -286,24 +282,29 @@ class SamsungACPlatform {
             const uuid = HAP.uuid.generate(accessoryConfig.ip + accessoryConfig.name);
             activeUUIDs.add(uuid);
 
-            const existingAccessory = this.cachedAccessories.find(accessory => accessory.UUID === uuid);
+            const existingAccessory = this.cachedAccessories.get(uuid);
 
             if (existingAccessory) {
                 this.log.info(`'${accessoryConfig.name}' 액세서리를 복원하고 로직을 연결합니다.`);
+                existingAccessory.context.config = accessoryConfig;
+                this.api.updatePlatformAccessories([existingAccessory]);
                 new SamsungACLogic(this.log, accessoryConfig, this.api, existingAccessory);
             } else {
                 this.log.info(`'${accessoryConfig.name}'를 새로운 액세서리로 등록합니다.`);
                 const accessory = new this.api.platformAccessory(accessoryConfig.name, uuid);
+                accessory.context.config = accessoryConfig;
                 new SamsungACLogic(this.log, accessoryConfig, this.api, accessory);
-                newAccessories.push(accessory);
+                this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
             }
         }
         
-        if (newAccessories.length > 0) {
-            this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, newAccessories);
+        const accessoriesToRemove = [];
+        for (const accessory of this.cachedAccessories.values()) {
+            if (!activeUUIDs.has(accessory.UUID)) {
+                accessoriesToRemove.push(accessory);
+            }
         }
 
-        const accessoriesToRemove = this.cachedAccessories.filter(accessory => !activeUUIDs.has(accessory.UUID));
         if (accessoriesToRemove.length > 0) {
             this.log.info(`${accessoriesToRemove.length}개의 오래된 액세서리를 제거합니다.`);
             this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, accessoriesToRemove);
