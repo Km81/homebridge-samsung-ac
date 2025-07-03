@@ -4,15 +4,8 @@
   "schema": {
     "type": "object",
     "properties": {
-      "name": {
-        "title": "플랫폼 이름",
-        "type": "string",
-        "default": "삼성 에어컨",
-        "required": true
-      },
       "accessories": {
         "type": "array",
-        "title": "에어컨 장치 목록",
         "items": {
           "type": "object",
           "properties": {
@@ -105,7 +98,6 @@
       "type": "help",
       "help": "이 플러그인은 TLSv1을 사용하는 구형 삼성 에어컨을 위한 것입니다. 각 에어컨 장치를 아래 목록에 추가하여 관리할 수 있습니다."
     },
-    "name",
     {
       "key": "accessories",
       "type": "list",
